@@ -1,0 +1,52 @@
+export type GameType = 'race' | 'old-maid' | 'poll';
+export type RoomStatus = 'lobby' | 'playing' | 'finished';
+
+export interface Player { id: string; name: string; connected: boolean; score?: number; }
+export interface RoomSnapshot {
+  id: string; game: GameType; status: RoomStatus; hostId: string;
+  players: Player[]; config: Record<string, unknown>; state: unknown;
+  messages: { id: string; playerName: string; text: string; at: number }[];
+  stateVersion: number;
+}
+
+export type ClientMessage =
+  | { type: 'join'; name: string; password?: string; reconnectToken?: string }
+  | { type: 'player.rename'; name: string }
+  | { type: 'host.start'; config?: Record<string, unknown> }
+  | { type: 'race.clickBatch'; count: number; clientSequence: number }
+  | { type: 'oldMaid.draw'; targetPlayerId: string; cardIndex: number }
+  | { type: 'oldMaid.tease'; cardIndex: number }
+  | { type: 'poll.vote'; optionId: string }
+  | { type: 'poll.reveal' }
+  | { type: 'poll.clearHistory' }
+  | { type: 'poll.nextRound'; question: string; options?: PollOption[] }
+  | { type: 'chat.send'; text: string };
+
+export interface RaceState {
+  startsAt: number;
+  distance: number;
+  durationMs: number;
+  endsAt: number;
+  distances: Record<string, number>;
+  finishedAt?: number;
+}
+export interface OldMaidCard { id: string; rank: string; suit: string; joker?: boolean; }
+export interface OldMaidState { turnPlayerId?: string; hands: Record<string, OldMaidCard[]>; eliminated: string[]; loserId?: string; lastDraw?: { actorId: string; targetPlayerId: string; cardIndex: number; card: OldMaidCard; at: number }; tease?: { playerId: string; cardIndex: number; at: number }; }
+export type PollMode = 'standard' | 'scrum';
+export interface PollOption { id: string; label: string; point?: number | null; }
+export interface PollRoundHistory {
+  round: number;
+  question: string;
+  options: PollOption[];
+  players: { playerId: string; name: string; optionId?: string }[];
+  revealedAt: number;
+}
+export interface PollState {
+  mode: PollMode;
+  revealed: boolean;
+  votes: Record<string, string>;
+  options: PollOption[];
+  question: string;
+  round: number;
+  history: PollRoundHistory[];
+}
