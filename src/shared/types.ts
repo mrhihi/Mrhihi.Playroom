@@ -28,8 +28,18 @@ export interface RaceState {
   durationMs: number;
   endsAt: number;
   distances: Record<string, number>;
+  mode?: 'manual' | 'random';
+  runners?: RaceRunner[];
+  finalRanking?: string[];
+  randomSeed?: number;
+  randomTimeline?: RaceTimelinePoint[];
+  completion?: Record<string, RaceCompletion>;
+  targetEndsAt?: number;
   finishedAt?: number;
 }
+export interface RaceRunner { id: string; name: string; virtual?: boolean; }
+export interface RaceTimelinePoint { offsetMs: number; distances: Record<string, number>; }
+export interface RaceCompletion { offsetMs: number; order: number; }
 export interface OldMaidCard { id: string; rank: string; suit: string; joker?: boolean; }
 export interface OldMaidState { turnPlayerId?: string; hands: Record<string, OldMaidCard[]>; eliminated: string[]; loserId?: string; lastDraw?: { actorId: string; targetPlayerId: string; cardIndex: number; card: OldMaidCard; at: number }; tease?: { playerId: string; cardIndex: number; at: number }; }
 export type PollMode = 'standard' | 'scrum';

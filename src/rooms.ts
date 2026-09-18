@@ -96,7 +96,13 @@ export class RoomService {
 
   resultSummary(room: Room) {
     const state = room.state as Record<string, any>;
-    if (room.game === 'race') return { winnerId: [...room.players].sort((a, b) => (state.distances?.[b.id] ?? 0) - (state.distances?.[a.id] ?? 0))[0]?.id, rankings: [...room.players].sort((a, b) => (state.distances?.[b.id] ?? 0) - (state.distances?.[a.id] ?? 0)).map(player => ({ playerId: player.id, name: player.name, score: state.distances?.[player.id] ?? 0 })) };
+    if (room.game === 'race') {
+      const runners = state.runners ?? room.players;
+      const ranked = state.mode === 'random'
+        ? (state.finalRanking ?? []).map((id: string) => runners.find((runner: { id: string }) => runner.id === id)).filter(Boolean)
+        : [...runners].sort((a: { id: string }, b: { id: string }) => (state.distances?.[b.id] ?? 0) - (state.distances?.[a.id] ?? 0));
+      return { winnerId: ranked[0]?.id, rankings: ranked.map((runner: { id: string; name: string; virtual?: boolean }, index: number) => ({ playerId: runner.id, name: runner.name, virtual: Boolean(runner.virtual), score: state.mode === 'random' ? index + 1 : state.distances?.[runner.id] ?? 0 })) };
+    }
     if (room.game === 'poll') return { options: (state.options ?? []).map((option: { id: string; label: string }) => ({ ...option, votes: Object.values(state.votes ?? {}).filter(value => value === option.id).length })) };
     return { loserId: state.loserId, loserName: room.players.find(player => player.id === state.loserId)?.name };
   }

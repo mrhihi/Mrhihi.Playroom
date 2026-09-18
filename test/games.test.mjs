@@ -9,21 +9,58 @@ const players = [
   { id: 'guest', name: '玩家', connected: true },
 ];
 
-test('賽跑在鳴槍前禁止點擊，鳴槍後會累積批次點擊並在抵達目標距離時結束', () => {
+test('賽跑在鳴槍前禁止點擊，鳴槍後會累積批次點擊並將完成者鎖定在終點', () => {
   const state = raceGame.createState(players, { distance: 100 });
   assert.throws(() => raceGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'race.clickBatch', count: 1, clientSequence: 1 } }), /尚未鳴槍/);
   state.startsAt = Date.now() - 1;
   state.endsAt = Date.now() + 5_000;
   const result = raceGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'race.clickBatch', count: 300, clientSequence: 1 } });
   assert.equal(state.distances.host, 100);
-  assert.equal(result.finished, true);
+  assert.equal(result.finished, false);
 });
 
-test('賽跑時間到後拒絕新的點擊', () => {
+test('手動賽跑會等所有跑者各自過線才結束', () => {
   const state = raceGame.createState(players, { distance: 100, durationMs: 5_000 });
   state.startsAt = Date.now() - 6_000;
   state.endsAt = Date.now() - 1;
-  assert.throws(() => raceGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'race.clickBatch', count: 1, clientSequence: 1 } }), /比賽已結束/);
+  const first = raceGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'race.clickBatch', count: 100, clientSequence: 1 } });
+  assert.equal(state.distances.host, 100);
+  assert.equal(first.finished, false);
+  const last = raceGame.apply(state, { actorId: 'guest', hostId: 'host', players, message: { type: 'race.clickBatch', count: 100, clientSequence: 2 } });
+  assert.equal(state.distances.guest, 100);
+  assert.equal(last.finished, true);
+});
+
+test('隨機排名會納入虛擬跑者並建立不重複的最終名次', () => {
+  const state = raceGame.createState(players, { mode: 'random', virtualRunners: [{ name: '機器人' }, { name: '局主' }] });
+  assert.equal(state.runners.length, 4);
+  assert.ok(state.runners.every(runner => state.randomTimeline[0].distances[runner.id] === 0));
+  assert.ok(state.runners.every(runner => state.randomTimeline.every((point, index, all) => index === 0 || point.distances[runner.id] >= all[index - 1].distances[runner.id])));
+  assert.ok(state.runners.every(runner => state.randomTimeline.at(-1).distances[runner.id] === state.distance));
+  assert.ok(state.runners.every(runner => {
+    const completedAt = state.completion[runner.id].offsetMs;
+    return state.randomTimeline.filter(point => point.offsetMs >= completedAt).every(point => point.distances[runner.id] === state.distance);
+  }));
+  assert.ok(new Set(Object.values(state.completion).map(completion => completion.offsetMs)).size > 1);
+  const preFinishPoints = state.randomTimeline.slice(1).filter(point => state.runners.every(runner => point.distances[runner.id] < state.distance));
+  const leaders = preFinishPoints.map(point => [...state.runners].sort((left, right) => point.distances[right.id] - point.distances[left.id])[0].id);
+  assert.ok(new Set(leaders).size > 1);
+  assert.equal(new Set(state.finalRanking).size, 4);
+  assert.deepEqual([...state.finalRanking].sort(), [...state.runners.map(runner => runner.id)].sort());
+  assert.deepEqual(state.finalRanking, [...state.runners].sort((left, right) => state.completion[left.id].order - state.completion[right.id].order).map(runner => runner.id));
+  const rankingBeforeFinish = [...state.finalRanking];
+  raceGame.finish(state);
+  assert.deepEqual(state.finalRanking, rankingBeforeFinish);
+  assert.equal(state.endsAt, state.startsAt + state.randomTimeline.at(-1).offsetMs);
+  assert.ok(state.runners.some(runner => runner.name === '局主 #2' && runner.virtual));
+  state.startsAt = Date.now() - 1;
+  assert.throws(() => raceGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'race.clickBatch', count: 1, clientSequence: 1 } }), /不支援手動衝刺/);
+});
+
+test('隨機排名可讓開局者只觀賽，但至少須有其他參賽者', () => {
+  const state = raceGame.createState(players, { mode: 'random', includeHost: false, virtualRunners: [{ name: '小藍' }] });
+  assert.deepEqual(state.runners.map(runner => runner.name), ['玩家', '小藍']);
+  assert.throws(() => raceGame.createState([players[0]], { mode: 'random', includeHost: false }), /至少加入一位/);
 });
 
 test('投票在所有連線玩家投完時自動公開，且只有局主可強制公開', () => {
