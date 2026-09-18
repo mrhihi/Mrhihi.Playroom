@@ -3,11 +3,26 @@ import test from 'node:test';
 import { raceGame } from '../dist/games/race.js';
 import { pollGame } from '../dist/games/poll.js';
 import { oldMaidGame, removePairs } from '../dist/games/old-maid.js';
+import { createDatabase } from '../dist/db.js';
+import { RoomService } from '../dist/rooms.js';
 
 const players = [
   { id: 'host', name: '局主', connected: true },
   { id: 'guest', name: '玩家', connected: true },
 ];
+
+test('玩家以 reconnect token 回到原身分，並保留系統離線通知', () => {
+  const rooms = new RoomService(createDatabase(':memory:'));
+  const { room } = rooms.create('poll', '局主', { question: '測試', options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }] });
+  const joined = rooms.addPlayer(room, '玩家');
+  rooms.addSystemMessage(room, '玩家 已離開房間');
+  room.players.find(player => player.id === joined.id).connected = false;
+  const resumed = rooms.addPlayer(room, '不同名稱不應覆蓋', joined.reconnectToken);
+  assert.equal(resumed.id, joined.id);
+  assert.equal(resumed.reconnected, true);
+  assert.equal(room.players.find(player => player.id === joined.id).connected, true);
+  assert.equal(rooms.channelMessages(room.id, 'room')[0].text, '玩家 已離開房間');
+});
 
 test('賽跑在鳴槍前禁止點擊，鳴槍後會累積批次點擊並將完成者鎖定在終點', () => {
   const state = raceGame.createState(players, { distance: 100 });
@@ -142,6 +157,16 @@ test('抽鬼牌會記錄抽中的牌，供抽牌者顯示翻牌效果', () => {
   oldMaidGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'oldMaid.draw', targetPlayerId: 'guest', cardIndex: 0 } });
   assert.equal(state.lastDraw.card.rank, '2');
   assert.equal(state.lastDraw.targetPlayerId, 'guest');
+});
+
+test('抽牌者可同步鎖定對手的牌，抽取後會清除鎖定', () => {
+  const state = { hands: { host: [{ id: 'h', rank: '1', suit: '♠' }], guest: [{ id: 'g', rank: '2', suit: '♥' }, { id: 'joker', rank: 'JOKER', suit: '🃏', joker: true }] }, eliminated: [], turnPlayerId: 'host' };
+  oldMaidGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'oldMaid.focus', targetPlayerId: 'guest', cardIndex: 1 } });
+  assert.deepEqual(state.focus && { actorId: state.focus.actorId, targetPlayerId: state.focus.targetPlayerId, cardIndex: state.focus.cardIndex }, { actorId: 'host', targetPlayerId: 'guest', cardIndex: 1 });
+  assert.throws(() => oldMaidGame.apply(state, { actorId: 'guest', hostId: 'host', players, message: { type: 'oldMaid.focus', targetPlayerId: 'host', cardIndex: 0 } }), /現在不能選牌/);
+  assert.throws(() => oldMaidGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'oldMaid.focus', targetPlayerId: 'host', cardIndex: 0 } }), /不能選自己的牌/);
+  oldMaidGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'oldMaid.draw', targetPlayerId: 'guest', cardIndex: 0 } });
+  assert.equal(state.focus, undefined);
 });
 
 test('等待抽牌的玩家可標記自己的手牌作為誘餌', () => {

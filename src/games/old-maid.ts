@@ -29,6 +29,18 @@ export const oldMaidGame: GameModule<OldMaidState> = {
     return { hands, eliminated: [], turnPlayerId: players[0]?.id };
   },
   apply(state, { actorId, players, message }) {
+    if (message.type === 'oldMaid.focus') {
+      if (state.turnPlayerId !== actorId || state.loserId) throw new Error('現在不能選牌');
+      if (message.targetPlayerId === undefined || message.cardIndex === undefined) {
+        state.focus = undefined;
+        return { eventType: 'oldMaid.focus', payload: { playerId: actorId, cleared: true } };
+      }
+      if (actorId === message.targetPlayerId) throw new Error('不能選自己的牌');
+      const target = state.hands[message.targetPlayerId] ?? [];
+      if (!target[message.cardIndex]) throw new Error('牌不存在');
+      state.focus = { actorId, targetPlayerId: message.targetPlayerId, cardIndex: message.cardIndex, at: Date.now() };
+      return { eventType: 'oldMaid.focus', payload: { playerId: actorId, targetPlayerId: message.targetPlayerId, cardIndex: message.cardIndex } };
+    }
     if (message.type === 'oldMaid.tease') {
       if (state.turnPlayerId === actorId || state.loserId) throw new Error('請在其他玩家抽牌時使用誘餌');
       if (!state.hands[actorId]?.[message.cardIndex]) throw new Error('牌不存在');
@@ -42,6 +54,7 @@ export const oldMaidGame: GameModule<OldMaidState> = {
     if (!card) throw new Error('牌不存在');
     target.splice(message.cardIndex, 1);
     state.tease = undefined;
+    state.focus = undefined;
     state.lastDraw = { actorId, targetPlayerId: message.targetPlayerId, cardIndex: message.cardIndex, card: structuredClone(card), at: Date.now() };
     state.hands[actorId].push(card);
     state.hands[actorId] = removePairs(state.hands[actorId]);

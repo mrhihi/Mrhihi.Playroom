@@ -19,6 +19,7 @@ export class RoomService {
   readonly rooms = new Map<string, Room>();
   private readonly accessTokens = new Map<string, { roomId: string; expires: number }>();
   private readonly finishListeners = new Set<(room: Room) => void>();
+  private readonly systemMessageListeners = new Set<(message: { roomId: string; playerName: string; text: string; at: number; id: string }) => void>();
 
   constructor(private readonly db: DatabasePort) {}
 
@@ -110,15 +111,16 @@ export class RoomService {
   addPlayer(room: Room, name: string, token?: string) {
     const existingId = token ? room.tokens.get(token) : undefined;
     const id = existingId ?? randomUUID();
+    let reconnected = false;
 
     if (existingId) {
       const player = room.players.find(candidate => candidate.id === id);
-      if (player) player.connected = true;
+      if (player) { reconnected = !player.connected; player.connected = true; }
     } else {
       room.players.push({ id, name: uniqueName(name, room.players.map(player => player.name)), connected: true });
     }
 
-    return { id, reconnectToken: existingId ? token! : this.issueToken(room, id) };
+    return { id, reconnectToken: existingId ? token! : this.issueToken(room, id), reconnected };
   }
 
   renamePlayer(room: Room, playerId: string, name: string) {
@@ -145,6 +147,13 @@ export class RoomService {
     this.db.saveMessage(row);
   }
 
+  addSystemMessage(room: Room, text: string) {
+    const row = this.addChannelMessage(room.id, 'room', '系統', text);
+    if (!row) return;
+    room.messages.push(row);
+    for (const listener of this.systemMessageListeners) listener({ ...row, roomId: room.id });
+  }
+
   apply(room: Room, playerId: string, message: ClientMessage) {
     const result = getGame(room.game).apply(room.state, {
       actorId: playerId,
@@ -160,6 +169,7 @@ export class RoomService {
 
   getStored(id: string) { return this.db.getSession(id); }
   onFinish(listener: (room: Room) => void) { this.finishListeners.add(listener); return () => this.finishListeners.delete(listener); }
+  onSystemMessage(listener: (message: { roomId: string; playerName: string; text: string; at: number; id: string }) => void) { this.systemMessageListeners.add(listener); return () => this.systemMessageListeners.delete(listener); }
   listAll() { return this.db.listSessions(); }
   delete(id: string) {
     const room = this.rooms.get(id);
@@ -191,12 +201,13 @@ export class RoomService {
     this.accessTokens.set(token, { roomId: id, expires: Date.now() + 30 * 60_000 });
     return token;
   }
-  canAccess(id: string, token?: string) {
+  canReconnect(id: string, token?: string) { const room = this.rooms.get(id); return Boolean(token && room?.tokens.has(token)); }
+  canAccess(id: string, token?: string, reconnectToken?: string) {
     const session = this.db.getSession(id);
     if (!session) return false;
     if (!session.password_hash) return true;
     const access = token ? this.accessTokens.get(token) : undefined;
-    return Boolean(access && access.roomId === id && access.expires > Date.now());
+    return Boolean((access && access.roomId === id && access.expires > Date.now()) || this.canReconnect(id, reconnectToken));
   }
   private grantAccess(roomId: string) { const token = randomBytes(18).toString('base64url'); this.accessTokens.set(token, { roomId, expires: Date.now() + 30 * 60_000 }); return token; }
 }

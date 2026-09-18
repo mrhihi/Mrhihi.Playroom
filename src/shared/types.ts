@@ -16,6 +16,7 @@ export type ClientMessage =
   | { type: 'race.clickBatch'; count: number; clientSequence: number }
   | { type: 'oldMaid.draw'; targetPlayerId: string; cardIndex: number }
   | { type: 'oldMaid.tease'; cardIndex: number }
+  | { type: 'oldMaid.focus'; targetPlayerId?: string; cardIndex?: number }
   | { type: 'poll.vote'; optionId: string }
   | { type: 'poll.reveal' }
   | { type: 'poll.clearHistory' }
@@ -41,7 +42,7 @@ export interface RaceRunner { id: string; name: string; virtual?: boolean; }
 export interface RaceTimelinePoint { offsetMs: number; distances: Record<string, number>; }
 export interface RaceCompletion { offsetMs: number; order: number; }
 export interface OldMaidCard { id: string; rank: string; suit: string; joker?: boolean; }
-export interface OldMaidState { turnPlayerId?: string; hands: Record<string, OldMaidCard[]>; eliminated: string[]; loserId?: string; lastDraw?: { actorId: string; targetPlayerId: string; cardIndex: number; card: OldMaidCard; at: number }; tease?: { playerId: string; cardIndex: number; at: number }; }
+export interface OldMaidState { turnPlayerId?: string; hands: Record<string, OldMaidCard[]>; eliminated: string[]; loserId?: string; lastDraw?: { actorId: string; targetPlayerId: string; cardIndex: number; card: OldMaidCard; at: number }; tease?: { playerId: string; cardIndex: number; at: number }; focus?: { actorId: string; targetPlayerId: string; cardIndex: number; at: number }; }
 export type PollMode = 'standard' | 'scrum';
 export interface PollOption { id: string; label: string; point?: number | null; }
 export interface PollRoundHistory {
