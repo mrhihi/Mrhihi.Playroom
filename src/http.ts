@@ -5,6 +5,7 @@ const access = (request: { headers: Record<string, unknown>; query: unknown }) =
 export function registerHttp(app: FastifyInstance, rooms: RoomService) {
   const adminTokens = new Map<string, number>();
   const admin = (request: { headers: Record<string, unknown> }) => { const token = request.headers['x-admin-token']; const expires = typeof token === 'string' ? adminTokens.get(token) : undefined; return Boolean(expires && expires > Date.now()); };
+  app.get('/api/health', async () => ({ ok: true }));
   app.post('/api/admin/login', async (request, reply) => { if (!config.adminPassword) return reply.code(503).send({ error: '尚未設定 ADMIN_PASSWORD' }); if ((request.body as { password?: string }).password !== config.adminPassword) return reply.code(401).send({ error: '管理者密碼錯誤' }); const token = randomBytes(24).toString('base64url'); adminTokens.set(token, Date.now() + 8 * 60 * 60_000); return { token, expiresAt: Date.now() + 8 * 60 * 60_000 }; });
   app.get('/api/admin/rooms', async (request, reply) => { if (!admin(request)) return reply.code(401).send({ error: '需要管理者登入' }); return { rooms: rooms.listAll() }; });
   app.delete('/api/admin/rooms/:id', async (request, reply) => { if (!admin(request)) return reply.code(401).send({ error: '需要管理者登入' }); const id = (request.params as { id: string }).id; if (!rooms.getStored(id)) return reply.code(404).send({ error: '房間不存在' }); rooms.delete(id); return { ok: true }; });

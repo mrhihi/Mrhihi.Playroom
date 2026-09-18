@@ -44,6 +44,31 @@ cp .env.example .env
 
 資料庫會保存房間設定、事件、結果、聊天室訊息與範本。玩家端會在瀏覽器保存近期房間、重連資訊與自己儲存的範本 ID。
 
+## GitHub Actions 自動部署
+
+`.github/workflows/build.yml` 會在所有 Push 與 Pull Request 執行安裝、建置與測試；只有 Push 到 `main` 且建置成功時，才會透過 SSH 部署到 `mrhihi-freevm.ddns.net`：
+
+- 目錄：`/home/ubuntu/Workspace/playroom/dist`
+- PM2 程序：`playroom`
+- 部署後會檢查：`http://127.0.0.1:3838/api/health`
+
+若要 push 到 `main` 但跳過正式部署，在 commit message 任意位置加入 `[skip deploy]`。該次仍會建置與測試，但跳過所有 SSH 部署步驟。
+
+首次設定時，在本機建立供 GitHub Actions 使用的專用 SSH 金鑰（不要設定 passphrase）：
+
+```bash
+ssh-keygen -t ed25519 -C "github-actions-playroom" -f ~/.ssh/playroom_actions
+cat ~/.ssh/playroom_actions.pub | ssh ubuntu@mrhihi-freevm.ddns.net \
+  'umask 077; mkdir -p ~/.ssh; cat >> ~/.ssh/authorized_keys'
+```
+
+在 GitHub repository 的 **Settings → Secrets and variables → Actions** 建立以下 repository secrets：
+
+- `DEPLOY_SSH_KEY`：`~/.ssh/playroom_actions` 私密金鑰的完整內容（不是 `.pub`）。
+- `DEPLOY_HOST_KEY`：伺服器 `/etc/ssh/ssh_host_ed25519_key.pub` 的完整單行內容。先在伺服器以 `sudo ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub -E sha256` 核對指紋，再以 `sudo cat /etc/ssh/ssh_host_ed25519_key.pub` 取得此值。
+
+部署採原子替換 `dist`，不會覆蓋遠端 `/home/ubuntu/Workspace/playroom` 的 `.env`、`playroom.sqlite`、WAL/SHM 檔案或 `node_modules`。因此若 `package.json` 或 `package-lock.json` 有變更，請先登入伺服器並在該目錄手動執行 `npm ci --omit=dev`，再部署對應的 `dist`。
+
 ## 驗證
 
 ```bash

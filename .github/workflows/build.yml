@@ -1,0 +1,68 @@
+name: Build and deploy
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: playroom-production-deploy
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      DEPLOY_HOST: mrhihi-freevm.ddns.net
+      DEPLOY_USER: ubuntu
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.19.x
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test
+        run: npm test
+
+      - name: Set up SSH
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !contains(github.event.head_commit.message, '[skip deploy]')
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
+
+      - name: Trust deployment host
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !contains(github.event.head_commit.message, '[skip deploy]')
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s %s\n' "$DEPLOY_HOST" "${{ secrets.DEPLOY_HOST_KEY }}" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Deploy compiled application
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !contains(github.event.head_commit.message, '[skip deploy]')
+        run: |
+          set -o pipefail
+          tar -C dist -czf - . | \
+            timeout 45s ssh -4 -o BatchMode=yes -o ConnectTimeout=15 \
+              -o ServerAliveInterval=10 -o ServerAliveCountMax=2 \
+              "$DEPLOY_USER@$DEPLOY_HOST" \
+              'set -eu; mkdir -p /home/ubuntu/Workspace/playroom; tmp=$(mktemp -d /tmp/playroom-dist.XXXXXX); backup=$(mktemp -d /tmp/playroom-dist-backup.XXXXXX); rmdir "$backup"; tar -C "$tmp" -xzf -; if [ -d /home/ubuntu/Workspace/playroom/dist ]; then mv /home/ubuntu/Workspace/playroom/dist "$backup"; fi; if ! mv "$tmp" /home/ubuntu/Workspace/playroom/dist; then [ ! -d "$backup" ] || mv "$backup" /home/ubuntu/Workspace/playroom/dist; exit 1; fi; [ ! -d "$backup" ] || rm -rf "$backup"'
+
+      - name: Restart Playroom and verify health
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !contains(github.event.head_commit.message, '[skip deploy]')
+        run: |
+          timeout 120s ssh -4 -o BatchMode=yes -o ConnectTimeout=15 \
+            -o ServerAliveInterval=10 -o ServerAliveCountMax=2 \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            'bash -lc '\''set -eu; if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; nvm use default >/dev/null; fi; command -v node; pm2 restart playroom --update-env; for attempt in {1..30}; do if curl --fail --silent --show-error --connect-timeout 2 --max-time 5 http://127.0.0.1:3838/api/health; then exit 0; fi; sleep 1; done; echo "Health check failed after 30 attempts"; pm2 status; pm2 logs playroom --lines 50 --nostream; exit 1'\'''
