@@ -1,2 +1,2 @@
-import { clientScript } from './client.js'; import { styles } from './styles.js';
-export const page = () => `<!doctype html><html lang="zh-Hant"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Playroom</title><style>${styles}</style></head><body><main id="app"></main><script type="module">${clientScript}</script></body></html>`;
+import { config } from '../config.js'; import { clientScript } from './client.js'; import { styles } from './styles.js';
+export const page = () => `<!doctype html><html lang="zh-Hant"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Playroom</title><style>${styles}</style></head><body><main id="app"></main><script>window.__PLAYROOM_BASE_PATH__=${JSON.stringify(config.basePath)}</script><script type="module">${clientScript}</script></body></html>`;

@@ -36,8 +36,9 @@ cp .env.example .env
 
 | 環境變數 | 預設值 | 說明 |
 | --- | --- | --- |
-| `PORT` | `3000` | HTTP 與 WebSocket 服務埠。 |
+| `PORT` | `3838` | HTTP 與 WebSocket 服務埠。 |
 | `HOST` | `0.0.0.0` | 監聽位址。 |
+| `BASE_PATH` | 空白 | 公開 URL 前綴，例如 `/playroom`；需搭配反向代理移除該前綴。 |
 | `DATABASE_FILE` | `playroom.sqlite` | SQLite 資料庫檔案位置。 |
 | `ADMIN_PASSWORD` | 未設定 | 啟用 `/admin` 管理登入的密碼。 |
 
