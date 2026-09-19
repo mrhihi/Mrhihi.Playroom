@@ -32,7 +32,7 @@ export function createRealtime(rooms: RoomService) {
         broadcast();
       } catch (error) { send(ws, { type: 'error', message: error instanceof Error ? error.message : '操作失敗' }); }
     });
-    ws.on('close', () => { if (!playerId || room.clients.get(playerId) !== ws) return; const player = room.players.find(candidate => candidate.id === playerId); room.clients.delete(playerId); if (player?.connected) { player.connected = false; rooms.addSystemMessage(room, player.name + ' 已離開房間'); } broadcast(); });
+    ws.on('close', () => { if (!playerId || room.clients.get(playerId) !== ws || !rooms.rooms.has(room.id)) return; const player = room.players.find(candidate => candidate.id === playerId); room.clients.delete(playerId); if (player?.connected) { player.connected = false; rooms.addSystemMessage(room, player.name + ' 已離開房間'); } broadcast(); });
   });
   return { upgrade(request: IncomingMessage, socket: import('node:stream').Duplex, head: Buffer) { if (request.url?.startsWith('/ws/')) wss.handleUpgrade(request, socket, head, ws => wss.emit('connection', ws, request)); else socket.destroy(); } };
 }

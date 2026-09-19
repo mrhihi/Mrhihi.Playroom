@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { raceGame } from '../dist/games/race.js';
 import { pollGame } from '../dist/games/poll.js';
 import { oldMaidGame, removePairs } from '../dist/games/old-maid.js';
@@ -22,6 +25,27 @@ test('玩家以 reconnect token 回到原身分，並保留系統離線通知', 
   assert.equal(resumed.reconnected, true);
   assert.equal(room.players.find(player => player.id === joined.id).connected, true);
   assert.equal(rooms.channelMessages(room.id, 'room')[0].text, '玩家 已離開房間');
+});
+
+test('房主刪除憑證可在重新開啟資料庫後永久刪除自己的房間與資料', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'playroom-owner-delete-'));
+  const file = join(directory, 'playroom.sqlite');
+  try {
+    const first = new RoomService(createDatabase(file));
+    const { room, ownerDeleteToken } = first.create('poll', '局主', { question: '測試', options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }] });
+    first.start(room);
+    first.addMessage(room, room.players[0], '要刪除的訊息');
+    assert.equal(first.deleteAsOwner(room.id, 'not-the-owner'), 'forbidden');
+    assert.ok(first.getStored(room.id));
+
+    const restarted = new RoomService(createDatabase(file));
+    assert.equal(restarted.deleteAsOwner(room.id, ownerDeleteToken), 'deleted');
+    assert.equal(restarted.getStored(room.id), undefined);
+    assert.deepEqual(restarted.events(room.id), []);
+    assert.deepEqual(restarted.roomMessages(room.id), []);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test('賽跑在鳴槍前禁止點擊，鳴槍後會累積批次點擊並將完成者鎖定在終點', () => {

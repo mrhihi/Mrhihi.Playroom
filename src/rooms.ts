@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID, scryptSync } from 'node:crypto';
+import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import type { ClientMessage, GameType, Player, RoomSnapshot } from './shared/types.js';
 import type { DatabasePort } from './db.js';
 import { getGame } from './games/index.js';
@@ -13,6 +13,10 @@ export type Room = RoomSnapshot & {
 const alphabet = '23456789abcdefghijkmnpqrstuvwxyz';
 const makeRoomId = () => Array.from(randomBytes(7), byte => alphabet[byte % alphabet.length]).join('');
 const hashPassword = (value: string) => scryptSync(value, 'playroom-salt', 32).toString('hex');
+const matchesHash = (value: string, expected: string) => {
+  const actual = Buffer.from(hashPassword(value), 'hex'), saved = Buffer.from(expected, 'hex');
+  return actual.length === saved.length && timingSafeEqual(actual, saved);
+};
 const uniqueName = (requested: string, used: string[]) => { const base = requested.trim().slice(0, 24) || '玩家'; if (!used.includes(base)) return base; for (let index = 2; index < 1000; index++) { const candidate = base.slice(0, 20) + ' #' + index; if (!used.includes(candidate)) return candidate; } return base.slice(0, 18) + ' #' + randomBytes(2).toString('hex'); };
 
 export class RoomService {
@@ -42,8 +46,9 @@ export class RoomService {
     };
 
     this.rooms.set(id, room);
-    this.db.saveSession(room, room.passwordHash);
-    return { room, hostId, reconnectToken: this.issueToken(room, hostId), accessToken: password ? this.grantAccess(id) : '' };
+    const ownerDeleteToken = randomBytes(32).toString('base64url');
+    this.db.saveSession(room, room.passwordHash, hashPassword(ownerDeleteToken));
+    return { room, hostId, reconnectToken: this.issueToken(room, hostId), ownerDeleteToken, accessToken: password ? this.grantAccess(id) : '' };
   }
 
   issueToken(room: Room, playerId: string) {
@@ -171,14 +176,21 @@ export class RoomService {
   onFinish(listener: (room: Room) => void) { this.finishListeners.add(listener); return () => this.finishListeners.delete(listener); }
   onSystemMessage(listener: (message: { roomId: string; playerName: string; text: string; at: number; id: string }) => void) { this.systemMessageListeners.add(listener); return () => this.systemMessageListeners.delete(listener); }
   listAll() { return this.db.listSessions(); }
-  delete(id: string) {
+  delete(id: string, reason = '房間已由管理者刪除') {
     const room = this.rooms.get(id);
     if (room) {
       if (room.gameTimer) clearTimeout(room.gameTimer);
-      for (const client of room.clients.values()) client.close(1008, '房間已由管理者刪除');
+      for (const client of room.clients.values()) client.close(1008, reason);
       this.rooms.delete(id);
     }
     this.db.deleteSession(id);
+  }
+  deleteAsOwner(id: string, token?: string) {
+    const session = this.db.getSession(id);
+    if (!session) return 'missing' as const;
+    if (!token || !session.owner_delete_token_hash || !matchesHash(token, session.owner_delete_token_hash)) return 'forbidden' as const;
+    this.delete(id, '房間已由房主刪除');
+    return 'deleted' as const;
   }
   history(ids: string[]) { return this.db.getHistory(ids); }
   roomMessages(id: string) { return this.db.getMessages(id, 'room'); }
