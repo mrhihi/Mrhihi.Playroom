@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { raceGame } from '../dist/games/race.js';
 import { pollGame } from '../dist/games/poll.js';
-import { oldMaidGame, removePairs } from '../dist/games/old-maid.js';
+import { oldMaidGame, removePairs, shuffleHand } from '../dist/games/old-maid.js';
 import { createDatabase } from '../dist/db.js';
 import { RoomService } from '../dist/rooms.js';
 
@@ -183,6 +183,13 @@ test('抽鬼牌會記錄抽中的牌，供抽牌者顯示翻牌效果', () => {
   assert.equal(state.lastDraw.targetPlayerId, 'guest');
 });
 
+test('抽鬼牌會累計每位玩家自動消除的配對牌張數', () => {
+  const state = { hands: { host: [{ id: 'h', rank: '1', suit: '♠' }], guest: [{ id: 'g', rank: '1', suit: '♥' }, { id: 'joker', rank: 'JOKER', suit: '🃏', joker: true }] }, eliminated: [], discardedCounts: { host: 2, guest: 0 }, turnPlayerId: 'host' };
+  oldMaidGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'oldMaid.draw', targetPlayerId: 'guest', cardIndex: 0 } });
+  assert.equal(state.discardedCounts.host, 4);
+  assert.equal(state.hands.host.length, 0);
+});
+
 test('抽牌者可同步鎖定對手的牌，抽取後會清除鎖定', () => {
   const state = { hands: { host: [{ id: 'h', rank: '1', suit: '♠' }], guest: [{ id: 'g', rank: '2', suit: '♥' }, { id: 'joker', rank: 'JOKER', suit: '🃏', joker: true }] }, eliminated: [], turnPlayerId: 'host' };
   oldMaidGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'oldMaid.focus', targetPlayerId: 'guest', cardIndex: 1 } });
@@ -198,4 +205,26 @@ test('等待抽牌的玩家可標記自己的手牌作為誘餌', () => {
   oldMaidGame.apply(state, { actorId: 'guest', hostId: 'host', players, message: { type: 'oldMaid.tease', cardIndex: 0 } });
   assert.equal(state.tease.playerId, 'guest');
   assert.equal(state.tease.cardIndex, 0);
+});
+
+test('抽鬼牌每次抽牌前每位玩家只能洗一次，且洗牌會清除相關標記', () => {
+  const state = { hands: { host: [{ id: 'h1', rank: '1', suit: '♠' }, { id: 'h2', rank: '2', suit: '♥' }], guest: [{ id: 'g1', rank: '3', suit: '♣' }] }, eliminated: [], turnPlayerId: 'host', focus: { actorId: 'guest', targetPlayerId: 'host', cardIndex: 1, at: 1 }, tease: { playerId: 'host', cardIndex: 0, at: 1 } };
+  oldMaidGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'oldMaid.shuffle' } });
+  assert.deepEqual(state.hands.host.map(card => card.id).sort(), ['h1', 'h2']);
+  assert.deepEqual(state.shuffledPlayerIds, ['host']);
+  assert.equal(state.focus, undefined);
+  assert.equal(state.tease, undefined);
+  assert.throws(() => oldMaidGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'oldMaid.shuffle' } }), /正在洗牌/);
+  state.shuffle.endsAt = Date.now() - 1;
+  assert.throws(() => oldMaidGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'oldMaid.shuffle' } }), /上次抽牌後已洗過牌/);
+});
+
+test('抽鬼牌每次成功抽牌後重置所有人的洗牌額度', () => {
+  const state = { hands: { host: [{ id: 'h', rank: '1', suit: '♠' }], guest: [{ id: 'g1', rank: '2', suit: '♥' }, { id: 'g2', rank: '3', suit: '♣' }] }, eliminated: [], turnPlayerId: 'host', shuffledPlayerIds: ['host', 'guest'] };
+  oldMaidGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'oldMaid.draw', targetPlayerId: 'guest', cardIndex: 0 } });
+  assert.deepEqual(state.shuffledPlayerIds, []);
+});
+
+test('洗牌使用 Fisher–Yates 並可提供可預期的亂數來源', () => {
+  assert.deepEqual(shuffleHand(['a', 'b', 'c'], () => 0), ['b', 'c', 'a']);
 });
