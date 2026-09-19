@@ -2,7 +2,9 @@ import { randomUUID } from 'node:crypto';
 import type { OldMaidCard, OldMaidState } from '../shared/types.js';
 import type { GameModule } from './contract.js';
 
-const shuffleDurationMs = 900;
+// Keep the shared shuffle state visible long enough for remote clients to receive
+// the update and see that the hand has actually been rearranged.
+const shuffleDurationMs = 1_500;
 
 export function shuffleHand<T>(items: T[], random = Math.random) {
   const shuffled = [...items];
