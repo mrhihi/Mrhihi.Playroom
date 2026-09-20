@@ -41,7 +41,7 @@ export const pollGame: GameModule<PollState> = {
   type: 'poll',
   createState(_players, config) {
     const mode: PollMode = config.mode === 'scrum' ? 'scrum' : 'standard';
-    return { mode, revealed: false, votes: {}, options: normalizeOptions(config.options, mode), question: String(config.question ?? '你怎麼選？').trim().slice(0, 160) || '你怎麼選？', round: 1, history: [] };
+    return { mode, revealed: false, votes: {}, voteSequence: 0, options: normalizeOptions(config.options, mode), question: String(config.question ?? '你怎麼選？').trim().slice(0, 160) || '你怎麼選？', round: 1, history: [] };
   },
   apply(state, { actorId, hostId, players, message }) {
     if (message.type === 'poll.nextRound') {
@@ -49,7 +49,7 @@ export const pollGame: GameModule<PollState> = {
       if (!state.revealed) throw new Error('請先公開目前題目的結果');
       const options = normalizeOptions(message.options ?? state.options, state.mode);
       state.question = String(message.question).trim().slice(0, 160) || '你怎麼選？';
-      state.options = options; state.votes = {}; state.revealed = false; state.round++;
+      state.options = options; state.votes = {}; state.lastVote = undefined; state.revealed = false; state.round++;
       return { eventType: 'poll.nextRound', payload: { question: state.question, options, round: state.round } };
     }
     if (message.type === 'poll.reveal') {
@@ -65,6 +65,8 @@ export const pollGame: GameModule<PollState> = {
     if (message.type !== 'poll.vote') throw new Error('無效的投票操作');
     if (state.revealed || !state.options.some(option => option.id === message.optionId)) throw new Error('投票已結束或選項無效');
     state.votes[actorId] = message.optionId;
+    state.voteSequence = (state.voteSequence ?? 0) + 1;
+    state.lastVote = { playerId: actorId, sequence: state.voteSequence };
     if (Object.keys(state.votes).length >= players.filter(player => player.connected).length) reveal(state, players);
     return { eventType: 'poll.vote', payload: { playerId: actorId, optionId: message.optionId } };
   },
@@ -72,9 +74,10 @@ export const pollGame: GameModule<PollState> = {
     const publicState = structuredClone(state);
     if (!Array.isArray(publicState.options) || !publicState.votes) return publicState;
     if (!publicState.revealed) {
-      const submittedCount = Object.keys(publicState.votes).length;
+      const submittedPlayerIds = Object.keys(publicState.votes);
+      const submittedCount = submittedPlayerIds.length;
       publicState.votes = {};
-      return { ...publicState, submittedCount };
+      return { ...publicState, submittedCount, submittedPlayerIds };
     }
     return publicState;
   },

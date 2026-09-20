@@ -57,6 +57,8 @@ export interface PollState {
   mode: PollMode;
   revealed: boolean;
   votes: Record<string, string>;
+  voteSequence: number;
+  lastVote?: { playerId: string; sequence: number };
   options: PollOption[];
   question: string;
   round: number;

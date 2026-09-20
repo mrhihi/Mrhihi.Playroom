@@ -130,15 +130,32 @@ test('投票最少需要兩個答項，並在開牌時保留每位玩家的選�
   assert.deepEqual(state.history[0].players, [{ playerId: 'host', name: '局主', optionId: 'yes' }, { playerId: 'guest', name: '玩家', optionId: undefined }]);
 });
 
-test('Scrum 估點允許數字與 ?，未開牌前不公開選擇', () => {
+test('Scrum 估點允許數字與 ?，未開牌前只公開已投票者身分', () => {
   const state = pollGame.createState(players, { mode: 'scrum', options: [{ id: 'small', label: '小', point: 3 }, { id: 'unknown', label: '不確定', point: '?' }] });
   assert.deepEqual(state.options.map(option => option.point), [3, null]);
   pollGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'poll.vote', optionId: 'small' } });
   const publicState = pollGame.publicState(state);
   assert.deepEqual(publicState.votes, {});
   assert.equal(publicState.submittedCount, 1);
+  assert.deepEqual(publicState.submittedPlayerIds, ['host']);
+  assert.equal('host' in publicState.votes, false);
+  assert.deepEqual(publicState.lastVote, { playerId: 'host', sequence: 1 });
   pollGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'poll.reveal' } });
   assert.equal(state.history[0].options[1].point, null);
+});
+
+test('投票改選會覆寫原答案，不增加投票人數', () => {
+  const state = pollGame.createState(players, { options: [{ id: 'yes', label: '是' }, { id: 'no', label: '否' }] });
+  pollGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'poll.vote', optionId: 'yes' } });
+  pollGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'poll.vote', optionId: 'no' } });
+  const publicState = pollGame.publicState(state);
+  assert.equal(publicState.submittedCount, 1);
+  assert.deepEqual(publicState.submittedPlayerIds, ['host']);
+  assert.deepEqual(publicState.lastVote, { playerId: 'host', sequence: 2 });
+  pollGame.apply(state, { actorId: 'guest', hostId: 'host', players, message: { type: 'poll.vote', optionId: 'yes' } });
+  assert.equal(state.revealed, true);
+  assert.deepEqual(state.votes, { host: 'no', guest: 'yes' });
+  assert.equal(state.history[0].players.find(player => player.playerId === 'host').optionId, 'no');
 });
 
 test('投票在尚未開始時可安全建立公開快照', () => {
