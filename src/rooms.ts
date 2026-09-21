@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
-import type { ClientMessage, GameType, Player, RoomSnapshot } from './shared/types.js';
+import type { ClientMessage, GameType, Player, PollState, RoomSnapshot } from './shared/types.js';
 import type { DatabasePort } from './db.js';
 import { getGame } from './games/index.js';
 
@@ -29,17 +29,19 @@ export class RoomService {
 
   constructor(private readonly db: DatabasePort) {}
 
-  create(game: GameType, hostName: string, config: Record<string, unknown>, password?: string) {
+  create(game: GameType, hostName: string, config: Record<string, unknown>, password?: string, hostObserver = false) {
     const id = makeRoomId();
     const hostId = randomUUID();
+    const host = { id: hostId, name: uniqueName(hostName, []), connected: false };
+    const observerHost = game === 'poll' && hostObserver;
     const room: Room = {
       id,
       game,
       status: 'lobby',
       hostId,
-      players: [{ id: hostId, name: uniqueName(hostName, []), connected: false }],
-      spectators: [],
-      memberRoles: new Map([[hostId, 'player']]),
+      players: observerHost ? [] : [host],
+      spectators: observerHost ? [host] : [],
+      memberRoles: new Map([[hostId, observerHost ? 'spectator' : 'player']]),
       config: game === 'tetris' ? { ...config, allowSpectators: config.allowSpectators !== false } : config,
       state: {},
       messages: [],
@@ -63,6 +65,11 @@ export class RoomService {
 
   snapshot(room: Room, viewerId?: string): RoomSnapshot {
     let state = getGame(room.game).publicState(room.state);
+    if (room.game === 'poll' && viewerId && room.status === 'playing') {
+      const pollState = room.state as PollState;
+      const myVoteOptionId = !pollState.revealed ? pollState.votes[viewerId] : undefined;
+      if (myVoteOptionId) state = { ...(state as object), myVoteOptionId };
+    }
     if (room.game === 'old-maid' && viewerId && room.status === 'playing') {
       const privateState = structuredClone(room.state) as { hands: Record<string, Array<{ joker?: boolean; rank: string; suit: string }>>; lastDraw?: { actorId: string; targetPlayerId: string; cardIndex: number; card: { joker?: boolean; rank: string; suit: string }; at: number } };
       for (const [playerId, hand] of Object.entries(privateState.hands)) if (playerId !== viewerId) for (const card of hand) { card.rank = '?'; card.suit = '🂠'; card.joker = false; }
@@ -120,7 +127,7 @@ export class RoomService {
     return { loserId: state.loserId, loserName: room.players.find(player => player.id === state.loserId)?.name };
   }
 
-  addPlayer(room: Room, name: string, token?: string) {
+  addPlayer(room: Room, name: string, token?: string, observer = false) {
     const existingId = token ? room.tokens.get(token) : undefined;
     const id = existingId ?? randomUUID();
     let reconnected = false;
@@ -130,7 +137,10 @@ export class RoomService {
       if (player) { reconnected = !player.connected; player.connected = true; }
     } else {
       const people = [...room.players, ...room.spectators];
-      if (room.game === 'tetris' && room.status === 'playing') {
+      if (room.game === 'poll' && observer) {
+        room.spectators.push({ id, name: uniqueName(name, people.map(player => player.name)), connected: true });
+        room.memberRoles.set(id, 'spectator');
+      } else if (room.game === 'tetris' && room.status === 'playing') {
         if (room.config.allowSpectators === false) throw new Error('本局未開放觀戰');
         room.spectators.push({ id, name: uniqueName(name, people.map(player => player.name)), connected: true });
         room.memberRoles.set(id, 'spectator');

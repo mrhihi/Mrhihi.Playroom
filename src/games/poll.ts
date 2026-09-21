@@ -37,6 +37,13 @@ const reveal = (state: PollState, players: { id: string; name: string }[]) => {
   state.history.push(archiveRound(state, players));
 };
 
+const syncRevealedRound = (state: PollState, players: { id: string; name: string }[]) => {
+  let index = -1;
+  for (let candidate = state.history.length - 1; candidate >= 0; candidate--) if (state.history[candidate].round === state.round) { index = candidate; break; }
+  if (index < 0) return;
+  state.history[index] = { ...archiveRound(state, players), revealedAt: state.history[index].revealedAt };
+};
+
 export const pollGame: GameModule<PollState> = {
   type: 'poll',
   createState(_players, config) {
@@ -63,11 +70,13 @@ export const pollGame: GameModule<PollState> = {
       return { eventType: 'poll.clearHistory', payload: { retainedCurrentRound: state.revealed } };
     }
     if (message.type !== 'poll.vote') throw new Error('無效的投票操作');
-    if (state.revealed || !state.options.some(option => option.id === message.optionId)) throw new Error('投票已結束或選項無效');
+    if ((state.revealed && state.mode !== 'scrum') || !state.options.some(option => option.id === message.optionId)) throw new Error('投票已結束或選項無效');
+    const revealedAction = state.revealed ? (state.votes[actorId] ? 'changed' : 'added') : undefined;
     state.votes[actorId] = message.optionId;
     state.voteSequence = (state.voteSequence ?? 0) + 1;
-    state.lastVote = { playerId: actorId, sequence: state.voteSequence };
-    if (Object.keys(state.votes).length >= players.filter(player => player.connected).length) reveal(state, players);
+    state.lastVote = { playerId: actorId, sequence: state.voteSequence, ...(revealedAction ? { revealedAction, revealedActionAt: Date.now() } : {}) };
+    if (state.revealed) syncRevealedRound(state, players);
+    else if (Object.keys(state.votes).length >= players.filter(player => player.connected).length) reveal(state, players);
     return { eventType: 'poll.vote', payload: { playerId: actorId, optionId: message.optionId } };
   },
   publicState(state) {

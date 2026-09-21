@@ -7,6 +7,7 @@ import { raceGame } from '../dist/games/race.js';
 import { pollGame } from '../dist/games/poll.js';
 import { oldMaidGame, removePairs, shuffleHand } from '../dist/games/old-maid.js';
 import { tetrisGame } from '../dist/games/tetris.js';
+import { clientScript } from '../dist/ui/client.js';
 import { createDatabase } from '../dist/db.js';
 import { RoomService } from '../dist/rooms.js';
 
@@ -14,6 +15,12 @@ const players = [
   { id: 'host', name: '局主', connected: true },
   { id: 'guest', name: '玩家', connected: true },
 ];
+
+test('內嵌瀏覽器腳本可正確解析', () => {
+  assert.doesNotThrow(() => new Function(clientScript));
+  assert.match(clientScript, /pollRoundView=function\(entry,mode,recentVote\)/);
+  assert.match(clientScript, /poll-answer-updated/);
+});
 
 test('俄羅斯方塊限制兩人開局，開局後可依設定加入觀眾', () => {
   const rooms = new RoomService(createDatabase(':memory:'));
@@ -26,6 +33,19 @@ test('俄羅斯方塊限制兩人開局，開局後可依設定加入觀眾', ()
   assert.equal(room.spectators.length, 1);
   assert.throws(() => rooms.apply(room, viewer.id, { type: 'tetris.rotate' }), /觀眾/);
   assert.equal(room.players[1].id, guest.id);
+});
+
+test('投票觀察者不會列入投票者，也不能投票', () => {
+  const rooms = new RoomService(createDatabase(':memory:'));
+  const { room } = rooms.create('poll', '局主', { options: [{ id: 'yes', label: '是' }, { id: 'no', label: '否' }] }, undefined, true);
+  const voter = rooms.addPlayer(room, '投票者');
+  const observer = rooms.addPlayer(room, '觀察者', undefined, true);
+  assert.equal(room.players.length, 1);
+  assert.equal(room.spectators.length, 2);
+  rooms.start(room);
+  rooms.apply(room, voter.id, { type: 'poll.vote', optionId: 'yes' });
+  assert.equal(room.state.revealed, true);
+  assert.throws(() => rooms.apply(room, observer.id, { type: 'poll.vote', optionId: 'no' }), /觀眾/);
 });
 
 test('俄羅斯方塊結束後局主可用原房間重開，其他人不可重開', () => {
@@ -100,6 +120,22 @@ test('玩家以 reconnect token 回到原身分，並保留系統離線通知', 
   assert.equal(resumed.reconnected, true);
   assert.equal(room.players.find(player => player.id === joined.id).connected, true);
   assert.equal(rooms.channelMessages(room.id, 'room')[0].text, '玩家 已離開房間');
+});
+
+test('未開牌投票快照只會揭露觀看者自己的選擇', () => {
+  const rooms = new RoomService(createDatabase(':memory:'));
+  const { room } = rooms.create('poll', '局主', { question: '測試', options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }] });
+  const guest = rooms.addPlayer(room, '玩家');
+  for (const player of room.players) player.connected = true;
+  rooms.start(room);
+  rooms.apply(room, room.hostId, { type: 'poll.vote', optionId: 'a' });
+
+  const hostState = rooms.snapshot(room, room.hostId).state;
+  const guestState = rooms.snapshot(room, guest.id).state;
+  assert.deepEqual(hostState.votes, {});
+  assert.equal(hostState.myVoteOptionId, 'a');
+  assert.deepEqual(guestState.votes, {});
+  assert.equal(guestState.myVoteOptionId, undefined);
 });
 
 test('房主刪除憑證可在重新開啟資料庫後永久刪除自己的房間與資料', () => {
@@ -217,6 +253,27 @@ test('Scrum 估點允許數字與 ?，未開牌前只公開已投票者身分', 
   assert.deepEqual(publicState.lastVote, { playerId: 'host', sequence: 1 });
   pollGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'poll.reveal' } });
   assert.equal(state.history[0].options[1].point, null);
+});
+
+test('Scrum 開牌後可補投或調整估點，並同步更新公開歷程', () => {
+  const state = pollGame.createState(players, { mode: 'scrum', options: [{ id: 'small', label: '小', point: 3 }, { id: 'large', label: '大', point: 8 }] });
+  pollGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'poll.vote', optionId: 'small' } });
+  pollGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'poll.reveal' } });
+  const revealedAt = state.history[0].revealedAt;
+  pollGame.apply(state, { actorId: 'guest', hostId: 'host', players, message: { type: 'poll.vote', optionId: 'large' } });
+  assert.equal(state.lastVote.revealedAction, 'added');
+  pollGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'poll.vote', optionId: 'large' } });
+  assert.equal(state.lastVote.revealedAction, 'changed');
+  assert.deepEqual(state.votes, { host: 'large', guest: 'large' });
+  assert.equal(state.history[0].revealedAt, revealedAt);
+  assert.deepEqual(state.history[0].players.map(player => player.optionId), ['large', 'large']);
+});
+
+test('一般投票開牌後仍不可改選', () => {
+  const state = pollGame.createState(players, { options: [{ id: 'yes', label: '是' }, { id: 'no', label: '否' }] });
+  pollGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'poll.vote', optionId: 'yes' } });
+  pollGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'poll.reveal' } });
+  assert.throws(() => pollGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'poll.vote', optionId: 'no' } }), /投票已結束/);
 });
 
 test('投票改選會覆寫原答案，不增加投票人數', () => {

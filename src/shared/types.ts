@@ -11,7 +11,7 @@ export interface RoomSnapshot {
 }
 
 export type ClientMessage =
-  | { type: 'join'; name: string; password?: string; reconnectToken?: string }
+  | { type: 'join'; name: string; password?: string; reconnectToken?: string; observer?: boolean }
   | { type: 'player.rename'; name: string }
   | { type: 'host.start'; config?: Record<string, unknown> }
   | { type: 'race.clickBatch'; count: number; clientSequence: number }
@@ -62,8 +62,10 @@ export interface PollState {
   mode: PollMode;
   revealed: boolean;
   votes: Record<string, string>;
+  /** Included only in an unrevealed snapshot for the player who cast this vote. */
+  myVoteOptionId?: string;
   voteSequence: number;
-  lastVote?: { playerId: string; sequence: number };
+  lastVote?: { playerId: string; sequence: number; revealedAction?: 'added' | 'changed'; revealedActionAt?: number };
   options: PollOption[];
   question: string;
   round: number;
