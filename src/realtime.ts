@@ -8,31 +8,32 @@ const send = (ws: WebSocket, value: unknown) => { if (ws.readyState === WebSocke
 export function createRealtime(rooms: RoomService) {
   const wss = new WebSocketServer({ noServer: true });
   const lastPong = new WeakMap<WebSocket, number>();
+  const broadcast = (room: import('./rooms.js').Room) => { for (const [id, client] of room.clients) send(client, { type: 'snapshot', payload: rooms.snapshot(room, id) }); };
   const heartbeat = setInterval(() => { const now = Date.now(); for (const client of wss.clients) { if (now - (lastPong.get(client) ?? 0) > 45_000) client.terminate(); else client.ping(); } }, 15_000);
-  wss.on('close', () => clearInterval(heartbeat));
-  rooms.onFinish(room => { for (const [playerId, client] of room.clients) send(client, { type: 'snapshot', payload: rooms.snapshot(room, playerId) }); });
+  const gameClock = setInterval(() => { for (const room of rooms.rooms.values()) if (rooms.tick(room)) broadcast(room); }, 50);
+  wss.on('close', () => { clearInterval(heartbeat); clearInterval(gameClock); });
+  rooms.onFinish(broadcast);
   wss.on('connection', (ws, request) => {
     const id = new URL(request.url ?? '/', 'http://localhost').pathname.split('/').pop() ?? '';
     const room = rooms.rooms.get(id); if (!room) return ws.close();
     let playerId = '';
     lastPong.set(ws, Date.now());
     ws.on('pong', () => lastPong.set(ws, Date.now()));
-    const broadcast = () => { for (const [id, client] of room.clients) send(client, { type: 'snapshot', payload: rooms.snapshot(room, id) }); };
     ws.on('message', raw => {
       let message: ClientMessage; try { message = JSON.parse(raw.toString()); } catch { return send(ws, { type: 'error', message: '無效訊息' }); }
-      if (message.type === 'join') { const joined = rooms.addPlayer(room, message.name, message.reconnectToken); playerId = joined.id; const previous = room.clients.get(playerId); room.clients.set(playerId, ws); if (previous && previous !== ws) previous.close(4001, '連線已由新連線取代'); if (joined.reconnected) rooms.addSystemMessage(room, room.players.find(player => player.id === playerId)?.name + ' 已回到房間'); send(ws, { type: 'joined', playerId, reconnectToken: joined.reconnectToken, reconnected: joined.reconnected }); broadcast(); return; }
+      if (message.type === 'join') { try { const joined = rooms.addPlayer(room, message.name, message.reconnectToken); playerId = joined.id; const previous = room.clients.get(playerId); room.clients.set(playerId, ws); if (previous && previous !== ws) previous.close(4001, '連線已由新連線取代'); const member = [...room.players, ...room.spectators].find(player => player.id === playerId); if (joined.reconnected) rooms.addSystemMessage(room, (member?.name ?? '玩家') + ' 已回到房間'); send(ws, { type: 'joined', playerId, reconnectToken: joined.reconnectToken, reconnected: joined.reconnected, role: joined.role }); broadcast(room); } catch (error) { send(ws, { type: 'error', message: error instanceof Error ? error.message : '無法加入房間' }); } return; }
       if (!playerId) return send(ws, { type: 'error', message: '請先加入房間' });
-      const player = room.players.find(candidate => candidate.id === playerId); if (!player) return;
+      const player = [...room.players, ...room.spectators].find(candidate => candidate.id === playerId); if (!player) return;
       try {
         if (message.type === 'player.rename') rooms.renamePlayer(room, playerId, message.name);
         else if (message.type === 'chat.send') rooms.addMessage(room, player, message.text);
         else if (message.type === 'host.start' && playerId === room.hostId) rooms.start(room, message.config);
         else if (room.status === 'playing') rooms.apply(room, playerId, message);
         else throw new Error('遊戲尚未開始或已結束');
-        broadcast();
+        broadcast(room);
       } catch (error) { send(ws, { type: 'error', message: error instanceof Error ? error.message : '操作失敗' }); }
     });
-    ws.on('close', () => { if (!playerId || room.clients.get(playerId) !== ws || !rooms.rooms.has(room.id)) return; const player = room.players.find(candidate => candidate.id === playerId); room.clients.delete(playerId); if (player?.connected) { player.connected = false; rooms.addSystemMessage(room, player.name + ' 已離開房間'); } broadcast(); });
+    ws.on('close', () => { if (!playerId || room.clients.get(playerId) !== ws || !rooms.rooms.has(room.id)) return; const player = [...room.players, ...room.spectators].find(candidate => candidate.id === playerId); room.clients.delete(playerId); if (player?.connected) { player.connected = false; rooms.addSystemMessage(room, player.name + ' 已離開房間'); } broadcast(room); });
   });
   return { upgrade(request: IncomingMessage, socket: import('node:stream').Duplex, head: Buffer) { if (request.url?.startsWith('/ws/')) wss.handleUpgrade(request, socket, head, ws => wss.emit('connection', ws, request)); else socket.destroy(); } };
 }

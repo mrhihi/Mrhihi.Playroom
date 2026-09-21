@@ -1,10 +1,11 @@
-export type GameType = 'race' | 'old-maid' | 'poll';
+export type GameType = 'race' | 'old-maid' | 'poll' | 'tetris';
 export type RoomStatus = 'lobby' | 'playing' | 'finished';
 
 export interface Player { id: string; name: string; connected: boolean; score?: number; }
 export interface RoomSnapshot {
   id: string; game: GameType; status: RoomStatus; hostId: string;
   players: Player[]; config: Record<string, unknown>; state: unknown;
+  spectators?: Player[];
   messages: { id: string; playerName: string; text: string; at: number }[];
   stateVersion: number;
 }
@@ -22,6 +23,10 @@ export type ClientMessage =
   | { type: 'poll.reveal' }
   | { type: 'poll.clearHistory' }
   | { type: 'poll.nextRound'; question: string; options?: PollOption[] }
+  | { type: 'tetris.move'; direction: 'left' | 'right' | 'down' }
+  | { type: 'tetris.rotate' }
+  | { type: 'tetris.hardDrop' }
+  | { type: 'tetris.attack'; lines: number }
   | { type: 'chat.send'; text: string };
 
 export interface RaceState {
@@ -63,4 +68,28 @@ export interface PollState {
   question: string;
   round: number;
   history: PollRoundHistory[];
+}
+
+export type TetrisCell = string | null;
+export interface TetrisPiece { type: string; rotation: number; x: number; y: number; }
+export interface TetrisPendingGarbage { lines: number; dueAt: number; fromPlayerId: string; }
+export interface TetrisPlayerState {
+  board: TetrisCell[][];
+  active: TetrisPiece;
+  next: string[];
+  bag: string[];
+  lines: number;
+  attackPoints: number;
+  attackQueue: number[];
+  incoming: TetrisPendingGarbage[];
+  lockAt?: number;
+  lost?: boolean;
+}
+export interface TetrisState {
+  players: Record<string, TetrisPlayerState>;
+  nextFallAt: number;
+  pausedAt?: number;
+  pausedPlayerId?: string;
+  winnerId?: string;
+  draw?: boolean;
 }

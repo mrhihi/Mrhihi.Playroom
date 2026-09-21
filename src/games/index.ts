@@ -3,6 +3,7 @@ import type { GameModule } from './contract.js';
 import { oldMaidGame } from './old-maid.js';
 import { pollGame } from './poll.js';
 import { raceGame } from './race.js';
+import { tetrisGame } from './tetris.js';
 
-const games: Record<GameType, GameModule<any>> = { race: raceGame, 'old-maid': oldMaidGame, poll: pollGame };
+const games: Record<GameType, GameModule<any>> = { race: raceGame, 'old-maid': oldMaidGame, poll: pollGame, tetris: tetrisGame };
 export const getGame = (type: GameType) => games[type];

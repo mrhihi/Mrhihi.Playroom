@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { raceGame } from '../dist/games/race.js';
 import { pollGame } from '../dist/games/poll.js';
 import { oldMaidGame, removePairs, shuffleHand } from '../dist/games/old-maid.js';
+import { tetrisGame } from '../dist/games/tetris.js';
 import { createDatabase } from '../dist/db.js';
 import { RoomService } from '../dist/rooms.js';
 
@@ -13,6 +14,80 @@ const players = [
   { id: 'host', name: '局主', connected: true },
   { id: 'guest', name: '玩家', connected: true },
 ];
+
+test('俄羅斯方塊限制兩人開局，開局後可依設定加入觀眾', () => {
+  const rooms = new RoomService(createDatabase(':memory:'));
+  const { room } = rooms.create('tetris', '局主', { allowSpectators: true });
+  const guest = rooms.addPlayer(room, '玩家');
+  assert.throws(() => rooms.addPlayer(room, '第三位'), /僅限兩位/);
+  rooms.start(room);
+  const viewer = rooms.addPlayer(room, '觀眾');
+  assert.equal(viewer.role, 'spectator');
+  assert.equal(room.spectators.length, 1);
+  assert.throws(() => rooms.apply(room, viewer.id, { type: 'tetris.rotate' }), /觀眾/);
+  assert.equal(room.players[1].id, guest.id);
+});
+
+test('俄羅斯方塊結束後局主可用原房間重開，其他人不可重開', () => {
+  const rooms = new RoomService(createDatabase(':memory:'));
+  const { room, reconnectToken } = rooms.create('tetris', '局主', {});
+  rooms.addPlayer(room, '玩家');
+  rooms.start(room);
+  rooms.finish(room);
+  assert.equal(rooms.restartTetris(room.id, 'wrong-token'), 'forbidden');
+  assert.equal(rooms.restartTetris(room.id, reconnectToken), 'started');
+  assert.equal(room.status, 'playing');
+  assert.equal(Object.keys(room.state.players).length, 2);
+});
+
+test('俄羅斯方塊攻擊會先抵銷最早來襲垃圾，且每次下移只釋放一筆', () => {
+  const state = tetrisGame.createState(players, {});
+  state.players.host.attackPoints = 4;
+  state.players.host.incoming.push({ lines: 2, dueAt: Date.now() + 1000, fromPlayerId: 'guest' });
+  tetrisGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'tetris.attack', lines: 3 } });
+  assert.deepEqual(state.players.host.attackQueue, [3]);
+  tetrisGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'tetris.move', direction: 'down' } });
+  assert.equal(state.players.host.attackQueue.length, 0);
+  assert.equal(state.players.host.incoming.length, 0);
+  assert.equal(state.players.guest.incoming[0].lines, 1);
+});
+
+test('俄羅斯方塊攻擊佇列最多四筆，硬降只釋放一筆', () => {
+  const state = tetrisGame.createState(players, {});
+  state.players.host.attackPoints = 5;
+  for (let i = 0; i < 4; i++) tetrisGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'tetris.attack', lines: 1 } });
+  assert.throws(() => tetrisGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'tetris.attack', lines: 1 } }), /佇列已滿/);
+  tetrisGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'tetris.hardDrop' } });
+  assert.equal(state.players.host.attackQueue.length, 3);
+});
+
+test('垃圾列推掉已佔用的最上排時，俄羅斯方塊會正常結束', () => {
+  const state = tetrisGame.createState(players, {});
+  state.players.host.board[0][0] = 'T';
+  state.players.host.incoming.push({ lines: 1, dueAt: Date.now() - 1, fromPlayerId: 'guest' });
+  const result = tetrisGame.tick(state, { hostId: 'host', players, now: Date.now() });
+  assert.equal(result.finished, true);
+  assert.equal(state.winnerId, 'guest');
+});
+
+test('活動方塊暫時貼頂但尚未推出棋盤時，俄羅斯方塊不會判負', () => {
+  const state = tetrisGame.createState(players, {});
+  state.players.host.active.y = 0;
+  state.players.host.incoming.push({ lines: 1, dueAt: Date.now() - 1, fromPlayerId: 'guest' });
+  const result = tetrisGame.tick(state, { hostId: 'host', players, now: Date.now() });
+  assert.equal(result.finished, false);
+  assert.equal(state.players.host.lost, undefined);
+});
+
+test('活動方塊鎖定時超出棋盤頂端會立刻結算對手勝利', () => {
+  const state = tetrisGame.createState(players, {});
+  state.players.host.active = { type: 'T', rotation: 0, x: 3, y: -1 };
+  for (let x = 3; x <= 5; x++) state.players.host.board[1][x] = 'G';
+  tetrisGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'tetris.move', direction: 'down' } });
+  const result = tetrisGame.tick(state, { hostId: 'host', players, now: Date.now() + 600 });
+  assert.equal(result.finished, true);
+  assert.equal(state.winnerId, 'guest');
+});
 
 test('玩家以 reconnect token 回到原身分，並保留系統離線通知', () => {
   const rooms = new RoomService(createDatabase(':memory:'));

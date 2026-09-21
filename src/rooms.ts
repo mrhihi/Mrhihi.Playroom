@@ -7,6 +7,8 @@ export type Room = RoomSnapshot & {
   clients: Map<string, import('ws').WebSocket>;
   tokens: Map<string, string>;
   passwordHash: string | null;
+  spectators: Player[];
+  memberRoles: Map<string, 'player' | 'spectator'>;
   gameTimer?: NodeJS.Timeout;
 };
 
@@ -36,7 +38,9 @@ export class RoomService {
       status: 'lobby',
       hostId,
       players: [{ id: hostId, name: uniqueName(hostName, []), connected: false }],
-      config,
+      spectators: [],
+      memberRoles: new Map([[hostId, 'player']]),
+      config: game === 'tetris' ? { ...config, allowSpectators: config.allowSpectators !== false } : config,
       state: {},
       messages: [],
       stateVersion: 0,
@@ -71,6 +75,7 @@ export class RoomService {
       status: room.status,
       hostId: room.hostId,
       players: room.players,
+      spectators: room.spectators,
       config: room.config,
       state,
       messages: room.messages,
@@ -81,6 +86,7 @@ export class RoomService {
   start(room: Room, config: Record<string, unknown> = {}) {
     room.config = { ...room.config, ...config };
     const game = getGame(room.game);
+    if (room.game === 'tetris' && room.players.length !== 2) throw new Error('俄羅斯方塊需要兩位玩家才能開始');
     room.state = game.createState(room.players, room.config);
     room.status = 'playing';
     room.stateVersion++;
@@ -110,6 +116,7 @@ export class RoomService {
       return { winnerId: ranked[0]?.id, rankings: ranked.map((runner: { id: string; name: string; virtual?: boolean }, index: number) => ({ playerId: runner.id, name: runner.name, virtual: Boolean(runner.virtual), score: state.mode === 'random' ? index + 1 : state.distances?.[runner.id] ?? 0 })) };
     }
     if (room.game === 'poll') return { options: (state.options ?? []).map((option: { id: string; label: string }) => ({ ...option, votes: Object.values(state.votes ?? {}).filter(value => value === option.id).length })) };
+    if (room.game === 'tetris') return { winnerId: state.winnerId, winnerName: room.players.find(player => player.id === state.winnerId)?.name, draw: Boolean(state.draw) };
     return { loserId: state.loserId, loserName: room.players.find(player => player.id === state.loserId)?.name };
   }
 
@@ -119,20 +126,29 @@ export class RoomService {
     let reconnected = false;
 
     if (existingId) {
-      const player = room.players.find(candidate => candidate.id === id);
+      const player = [...room.players, ...room.spectators].find(candidate => candidate.id === id);
       if (player) { reconnected = !player.connected; player.connected = true; }
     } else {
-      room.players.push({ id, name: uniqueName(name, room.players.map(player => player.name)), connected: true });
+      const people = [...room.players, ...room.spectators];
+      if (room.game === 'tetris' && room.status === 'playing') {
+        if (room.config.allowSpectators === false) throw new Error('本局未開放觀戰');
+        room.spectators.push({ id, name: uniqueName(name, people.map(player => player.name)), connected: true });
+        room.memberRoles.set(id, 'spectator');
+      } else {
+        if (room.game === 'tetris' && room.players.length >= 2) throw new Error('俄羅斯方塊大廳僅限兩位玩家');
+        room.players.push({ id, name: uniqueName(name, people.map(player => player.name)), connected: true });
+        room.memberRoles.set(id, 'player');
+      }
     }
 
-    return { id, reconnectToken: existingId ? token! : this.issueToken(room, id), reconnected };
+    return { id, reconnectToken: existingId ? token! : this.issueToken(room, id), reconnected, role: room.memberRoles.get(id) ?? 'player' };
   }
 
   renamePlayer(room: Room, playerId: string, name: string) {
-    const player = room.players.find(candidate => candidate.id === playerId);
+    const player = [...room.players, ...room.spectators].find(candidate => candidate.id === playerId);
     const nextName = name.trim().slice(0, 24);
     if (!player || !nextName) throw new Error('暱名不可為空白');
-    player.name = uniqueName(nextName, room.players.filter(candidate => candidate.id !== playerId).map(candidate => candidate.name));
+    player.name = uniqueName(nextName, [...room.players, ...room.spectators].filter(candidate => candidate.id !== playerId).map(candidate => candidate.name));
     room.stateVersion++;
     this.db.saveEvent(room.id, room.stateVersion, 'player.rename', { playerId, name: nextName });
   }
@@ -160,6 +176,7 @@ export class RoomService {
   }
 
   apply(room: Room, playerId: string, message: ClientMessage) {
+    if (room.memberRoles.get(playerId) === 'spectator') throw new Error('觀眾不能操作遊戲');
     const result = getGame(room.game).apply(room.state, {
       actorId: playerId,
       hostId: room.hostId,
@@ -172,7 +189,33 @@ export class RoomService {
     if (result.finished) this.finish(room);
   }
 
+  tick(room: Room, now = Date.now()) {
+    if (room.status !== 'playing') return false;
+    if (room.game === 'tetris') {
+      const disconnected = room.players.find(player => !player.connected);
+      const state = room.state as { pausedAt?: number; pausedPlayerId?: string; nextFallAt: number; winnerId?: string };
+      if (disconnected) {
+        if (!state.pausedAt) { state.pausedAt = now; state.pausedPlayerId = disconnected.id; room.stateVersion++; return true; }
+        if (now - state.pausedAt >= 30_000) { state.winnerId = room.players.find(player => player.id !== disconnected.id)?.id; this.finish(room); return true; }
+        return false;
+      }
+      if (state.pausedAt) { state.nextFallAt += now - state.pausedAt; delete state.pausedAt; delete state.pausedPlayerId; room.stateVersion++; return true; }
+    }
+    const result = getGame(room.game).tick?.(room.state, { hostId: room.hostId, players: room.players, now });
+    if (!result) return false;
+    room.stateVersion++;
+    if (result.finished) this.finish(room);
+    return true;
+  }
+
   getStored(id: string) { return this.db.getSession(id); }
+  restartTetris(id: string, reconnectToken?: string) {
+    const room = this.rooms.get(id);
+    if (!room || room.game !== 'tetris' || room.status !== 'finished') return 'missing' as const;
+    if (!reconnectToken || room.tokens.get(reconnectToken) !== room.hostId) return 'forbidden' as const;
+    this.start(room);
+    return 'started' as const;
+  }
   onFinish(listener: (room: Room) => void) { this.finishListeners.add(listener); return () => this.finishListeners.delete(listener); }
   onSystemMessage(listener: (message: { roomId: string; playerName: string; text: string; at: number; id: string }) => void) { this.systemMessageListeners.add(listener); return () => this.systemMessageListeners.delete(listener); }
   listAll() { return this.db.listSessions(); }

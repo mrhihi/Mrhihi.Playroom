@@ -20,4 +20,5 @@ export interface GameModule<State> {
   publicState(state: State): unknown;
   finishDelayMs?(state: State): number;
   finish?(state: State): void;
+  tick?(state: State, context: Omit<GameActionContext, 'actorId' | 'message'> & { now: number }): GameActionResult | undefined;
 }
