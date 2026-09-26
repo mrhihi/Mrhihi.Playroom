@@ -71,6 +71,7 @@ test('單人俄羅斯方塊頂出棋盤會標記本局結束', () => {
 test('單人俄羅斯方塊頂出棋盤後結束並保存成績', () => {
   const rooms = new RoomService(createDatabase(':memory:'));
   const { room } = rooms.create('tetris', '局主', { mode: 'solo' });
+  room.players[0].connected = true;
   rooms.start(room);
   room.state.players[room.hostId].active = { type: 'T', rotation: 0, x: 3, y: -1 };
   for (let x = 3; x <= 5; x++) room.state.players[room.hostId].board[1][x] = 'G';
