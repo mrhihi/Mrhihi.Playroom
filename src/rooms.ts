@@ -42,7 +42,7 @@ export class RoomService {
       players: observerHost ? [] : [host],
       spectators: observerHost ? [host] : [],
       memberRoles: new Map([[hostId, observerHost ? 'spectator' : 'player']]),
-      config: game === 'tetris' ? { ...config, allowSpectators: config.allowSpectators !== false } : config,
+      config: game === 'tetris' ? { ...config, mode: config.mode === 'solo' ? 'solo' : 'versus', allowSpectators: config.allowSpectators !== false } : config,
       state: {},
       messages: [],
       stateVersion: 0,
@@ -93,7 +93,7 @@ export class RoomService {
   start(room: Room, config: Record<string, unknown> = {}) {
     room.config = { ...room.config, ...config };
     const game = getGame(room.game);
-    if (room.game === 'tetris' && room.players.length !== 2) throw new Error('俄羅斯方塊需要兩位玩家才能開始');
+    if (room.game === 'tetris' && room.players.length !== (room.config.mode === 'solo' ? 1 : 2)) throw new Error(room.config.mode === 'solo' ? '單人俄羅斯方塊需要一位玩家才能開始' : '俄羅斯方塊需要兩位玩家才能開始');
     room.state = game.createState(room.players, room.config);
     room.status = 'playing';
     room.stateVersion++;
@@ -123,7 +123,10 @@ export class RoomService {
       return { winnerId: ranked[0]?.id, rankings: ranked.map((runner: { id: string; name: string; virtual?: boolean }, index: number) => ({ playerId: runner.id, name: runner.name, virtual: Boolean(runner.virtual), score: state.mode === 'random' ? index + 1 : state.distances?.[runner.id] ?? 0 })) };
     }
     if (room.game === 'poll') return { options: (state.options ?? []).map((option: { id: string; label: string }) => ({ ...option, votes: Object.values(state.votes ?? {}).filter(value => value === option.id).length })) };
-    if (room.game === 'tetris') return { winnerId: state.winnerId, winnerName: room.players.find(player => player.id === state.winnerId)?.name, draw: Boolean(state.draw) };
+    if (room.game === 'tetris') {
+      if (state.mode === 'solo') { const player = room.players[0], value = state.players?.[player?.id]; return { playerId: player?.id, playerName: player?.name, score: value?.score ?? 0, lines: value?.lines ?? 0, level: Math.floor((value?.lines ?? 0) / 10) + 1 }; }
+      return { winnerId: state.winnerId, winnerName: room.players.find(player => player.id === state.winnerId)?.name, draw: Boolean(state.draw) };
+    }
     return { loserId: state.loserId, loserName: room.players.find(player => player.id === state.loserId)?.name };
   }
 
@@ -140,7 +143,7 @@ export class RoomService {
       if (room.game === 'poll' && observer) {
         room.spectators.push({ id, name: uniqueName(name, people.map(player => player.name)), connected: true });
         room.memberRoles.set(id, 'spectator');
-      } else if (room.game === 'tetris' && room.status === 'playing') {
+      } else if (room.game === 'tetris' && (room.status === 'playing' || room.config.mode === 'solo')) {
         if (room.config.allowSpectators === false) throw new Error('本局未開放觀戰');
         room.spectators.push({ id, name: uniqueName(name, people.map(player => player.name)), connected: true });
         room.memberRoles.set(id, 'spectator');

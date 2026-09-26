@@ -81,6 +81,7 @@ export interface TetrisPlayerState {
   next: string[];
   bag: string[];
   lines: number;
+  score: number;
   attackPoints: number;
   attackQueue: number[];
   incoming: TetrisPendingGarbage[];
@@ -88,10 +89,12 @@ export interface TetrisPlayerState {
   lost?: boolean;
 }
 export interface TetrisState {
+  mode: 'solo' | 'versus';
   players: Record<string, TetrisPlayerState>;
   nextFallAt: number;
   pausedAt?: number;
   pausedPlayerId?: string;
   winnerId?: string;
   draw?: boolean;
+  gameOver?: boolean;
 }

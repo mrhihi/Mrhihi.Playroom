@@ -35,6 +35,52 @@ test('俄羅斯方塊限制兩人開局，開局後可依設定加入觀眾', ()
   assert.equal(room.players[1].id, guest.id);
 });
 
+test('單人俄羅斯方塊可由局主開始，其他加入者只能觀戰', () => {
+  const rooms = new RoomService(createDatabase(':memory:'));
+  const { room } = rooms.create('tetris', '局主', { mode: 'solo', allowSpectators: true });
+  rooms.start(room);
+  const viewer = rooms.addPlayer(room, '觀眾');
+  assert.equal(room.status, 'playing');
+  assert.equal(room.players.length, 1);
+  assert.equal(viewer.role, 'spectator');
+  assert.throws(() => rooms.apply(room, viewer.id, { type: 'tetris.rotate' }), /觀眾/);
+});
+
+test('單人俄羅斯方塊依消行前等級計分，且不允許攻擊', () => {
+  const state = tetrisGame.createState([players[0]], { mode: 'solo' });
+  const player = state.players.host;
+  player.active = { type: 'O', rotation: 0, x: -1, y: 17 };
+  for (const y of [18, 19]) for (let x = 2; x < 10; x++) player.board[y][x] = 'G';
+  tetrisGame.apply(state, { actorId: 'host', hostId: 'host', players: [players[0]], message: { type: 'tetris.hardDrop' } });
+  assert.equal(player.lines, 2);
+  assert.equal(player.score, 300);
+  assert.throws(() => tetrisGame.apply(state, { actorId: 'host', hostId: 'host', players: [players[0]], message: { type: 'tetris.attack', lines: 1 } }), /沒有攻擊/);
+});
+
+test('單人俄羅斯方塊頂出棋盤會標記本局結束', () => {
+  const state = tetrisGame.createState([players[0]], { mode: 'solo' });
+  state.players.host.active = { type: 'T', rotation: 0, x: 3, y: -1 };
+  for (let x = 3; x <= 5; x++) state.players.host.board[1][x] = 'G';
+  tetrisGame.apply(state, { actorId: 'host', hostId: 'host', players: [players[0]], message: { type: 'tetris.move', direction: 'down' } });
+  const result = tetrisGame.tick(state, { hostId: 'host', players: [players[0]], now: Date.now() + 600 });
+  assert.equal(result.finished, true);
+  assert.equal(state.gameOver, true);
+  assert.equal(state.winnerId, undefined);
+});
+
+test('單人俄羅斯方塊頂出棋盤後結束並保存成績', () => {
+  const rooms = new RoomService(createDatabase(':memory:'));
+  const { room } = rooms.create('tetris', '局主', { mode: 'solo' });
+  rooms.start(room);
+  room.state.players[room.hostId].active = { type: 'T', rotation: 0, x: 3, y: -1 };
+  for (let x = 3; x <= 5; x++) room.state.players[room.hostId].board[1][x] = 'G';
+  rooms.apply(room, room.hostId, { type: 'tetris.move', direction: 'down' });
+  rooms.tick(room, Date.now() + 600);
+  assert.equal(room.status, 'finished');
+  assert.equal(room.state.gameOver, true);
+  assert.deepEqual(rooms.resultSummary(room), { playerId: room.hostId, playerName: '局主', score: 0, lines: 0, level: 1 });
+});
+
 test('投票觀察者不會列入投票者，也不能投票', () => {
   const rooms = new RoomService(createDatabase(':memory:'));
   const { room } = rooms.create('poll', '局主', { options: [{ id: 'yes', label: '是' }, { id: 'no', label: '否' }] }, undefined, true);
