@@ -26,6 +26,7 @@ export type ClientMessage =
   | { type: 'tetris.move'; direction: 'left' | 'right' | 'down' }
   | { type: 'tetris.rotate' }
   | { type: 'tetris.hardDrop' }
+  | { type: 'tetris.surrender' }
   | { type: 'tetris.attack'; lines: number }
   | { type: 'chat.send'; text: string };
 

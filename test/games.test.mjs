@@ -16,6 +16,24 @@ const players = [
   { id: 'guest', name: '玩家', connected: true },
 ];
 
+test('俄羅斯方塊投降立即判對手獲勝，且不能重複投降', () => {
+  const state = tetrisGame.createState(players, {});
+  const context = { actorId: 'guest', hostId: 'host', players, message: { type: 'tetris.surrender' } };
+  const result = tetrisGame.apply(state, context);
+  assert.equal(result.finished, true);
+  assert.equal(state.players.guest.lost, true);
+  assert.equal(state.winnerId, 'host');
+  assert.throws(() => tetrisGame.apply(state, context), /目前不能操作/);
+});
+
+test('俄羅斯方塊局主也能投降，判加入者獲勝', () => {
+  const state = tetrisGame.createState(players, {});
+  const result = tetrisGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'tetris.surrender' } });
+  assert.equal(result.finished, true);
+  assert.equal(state.players.host.lost, true);
+  assert.equal(state.winnerId, 'guest');
+});
+
 test('內嵌瀏覽器腳本可正確解析', () => {
   assert.doesNotThrow(() => new Function(clientScript));
   assert.match(clientScript, /pollRoundView=function\(entry,mode,recentVote\)/);
