@@ -50,7 +50,7 @@ const down = (state: TetrisState, id: string, now: number) => {
   const next = { ...player.active, y: player.active.y + 1 };
   if (valid(player, next)) { player.active = next; player.lockAt = undefined; releaseAttack(state, id, now); }
   else if (player.lockAt && now >= player.lockAt) lock(state, id, now);
-  else player.lockAt = now + 500;
+  else if (!player.lockAt) player.lockAt = now + 500;
 };
 const addGarbage = (player: TetrisPlayerState, lines: number) => {
   for (let i = 0; i < lines; i++) {

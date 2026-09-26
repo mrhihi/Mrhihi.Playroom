@@ -57,6 +57,34 @@ test('單人俄羅斯方塊依消行前等級計分，且不允許攻擊', () =>
   assert.throws(() => tetrisGame.apply(state, { actorId: 'host', hostId: 'host', players: [players[0]], message: { type: 'tetris.attack', lines: 1 } }), /沒有攻擊/);
 });
 
+test('俄羅斯方塊高速重力不會重設落地鎖定倒數', () => {
+  const state = tetrisGame.createState([players[0]], { mode: 'solo' });
+  const player = state.players.host;
+  const now = Date.now();
+  player.active = { type: 'O', rotation: 0, x: 3, y: 18 };
+
+  for (let elapsed = 0; elapsed < 500; elapsed += 50) {
+    state.nextFallAt = now + elapsed;
+    tetrisGame.tick(state, { hostId: 'host', players: [players[0]], now: now + elapsed });
+  }
+  assert.equal(player.lockAt, now + 500);
+
+  state.nextFallAt = now + 500;
+  tetrisGame.tick(state, { hostId: 'host', players: [players[0]], now: now + 500 });
+  assert.equal(player.board[19][4], 'O');
+  assert.equal(player.lockAt, undefined);
+});
+
+test('連續下鍵不會延後俄羅斯方塊落地鎖定', () => {
+  const state = tetrisGame.createState([players[0]], { mode: 'solo' });
+  const player = state.players.host;
+  player.active = { type: 'O', rotation: 0, x: 3, y: 18 };
+  tetrisGame.apply(state, { actorId: 'host', hostId: 'host', players: [players[0]], message: { type: 'tetris.move', direction: 'down' } });
+  const lockAt = player.lockAt;
+  for (let i = 0; i < 10; i++) tetrisGame.apply(state, { actorId: 'host', hostId: 'host', players: [players[0]], message: { type: 'tetris.move', direction: 'down' } });
+  assert.equal(player.lockAt, lockAt);
+});
+
 test('單人俄羅斯方塊頂出棋盤會標記本局結束', () => {
   const state = tetrisGame.createState([players[0]], { mode: 'solo' });
   state.players.host.active = { type: 'T', rotation: 0, x: 3, y: -1 };
