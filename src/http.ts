@@ -14,6 +14,11 @@ export function registerHttp(app: FastifyInstance, rooms: RoomService) {
     try { return reply.code(201).send(rooms.submitSoloResult(request.body)); }
     catch (error) { return reply.code(error instanceof ZodError ? 400 : 409).send({ error: error instanceof ZodError ? '單人結果資料格式不正確' : error instanceof Error ? error.message : '無法保存結果' }); }
   });
+  app.get('/api/tetris/leaderboard', async (request, reply) => {
+    const mode = (request.query as { mode?: string }).mode;
+    if (mode !== 'solo' && mode !== 'versus') return reply.code(400).send({ error: '請指定 solo 或 versus 排名模式' });
+    return { mode, entries: rooms.tetrisLeaderboard(mode).map((entry, index) => ({ ...entry, rank: index + 1 })) };
+  });
   app.get('/api/health', async () => ({ ok: true }));
   app.post('/api/admin/login', async (request, reply) => { if (!config.adminPassword) return reply.code(503).send({ error: '尚未設定 ADMIN_PASSWORD' }); if ((request.body as { password?: string }).password !== config.adminPassword) return reply.code(401).send({ error: '管理者密碼錯誤' }); const token = randomBytes(24).toString('base64url'); adminTokens.set(token, Date.now() + 8 * 60 * 60_000); return { token, expiresAt: Date.now() + 8 * 60 * 60_000 }; });
   app.get('/api/admin/rooms', async (request, reply) => { if (!admin(request)) return reply.code(401).send({ error: '需要管理者登入' }); return { rooms: rooms.listAll() }; });

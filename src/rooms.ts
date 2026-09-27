@@ -141,7 +141,7 @@ export class RoomService {
     if (room.game === 'poll') return { options: (state.options ?? []).map((option: { id: string; label: string }) => ({ ...option, votes: Object.values(state.votes ?? {}).filter(value => value === option.id).length })) };
     if (room.game === 'tetris') {
       if (state.mode === 'solo') { const player = room.players[0], value = state.players?.[player?.id]; return { playerId: player?.id, playerName: player?.name, score: value?.score ?? 0, lines: value?.lines ?? 0, level: Math.floor((value?.lines ?? 0) / 10) + 1 }; }
-      return { winnerId: state.winnerId, winnerName: room.players.find(player => player.id === state.winnerId)?.name, draw: Boolean(state.draw) };
+      return { winnerId: state.winnerId, winnerName: room.players.find(player => player.id === state.winnerId)?.name, draw: Boolean(state.draw), rankings: room.players.map(player => ({ playerId: player.id, name: player.name, score: state.players?.[player.id]?.score ?? 0, lines: state.players?.[player.id]?.lines ?? 0 })) };
     }
     return { loserId: state.loserId, loserName: room.players.find(player => player.id === state.loserId)?.name };
   }
@@ -264,6 +264,7 @@ export class RoomService {
     this.delete(id, '房間已由房主刪除');
     return 'deleted' as const;
   }
+  tetrisLeaderboard(mode: 'solo' | 'versus') { return this.db.getTetrisLeaderboard(mode); }
   history(ids: string[]) { return this.db.getHistory(ids); }
   roomMessages(id: string) { return this.db.getMessages(id, 'room'); }
   events(id: string) { return this.db.getEvents(id); }
