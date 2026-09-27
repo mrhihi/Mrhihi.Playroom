@@ -13,7 +13,9 @@ export const soloStateSchema = z.object({
     attackQueue: z.array(z.never()).length(0), incoming: z.array(z.never()).length(0),
     lockAt: integer.optional(), lost: z.boolean().optional(),
   }).strict() }).strict(),
-  nextFallAt: integer, gameOver: z.boolean().optional(),
+  // Gravity intervals become fractional as the level increases. Existing
+  // saves retain that precision, so accept the game's actual clock values.
+  nextFallAt: z.number().finite().nonnegative().max(Number.MAX_SAFE_INTEGER), gameOver: z.boolean().optional(),
 }).strict();
 export const soloResultSchema = z.object({
   submissionId: z.string().uuid(), ownerDeleteToken: z.string().regex(/^[a-f0-9]{64}$/),

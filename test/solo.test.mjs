@@ -58,6 +58,24 @@ test('結果提交持久去重、密碼保護、刪除且不建立活動房間',
   await app.close();
 });
 
+test('升級後含小數下落時間的存檔可續玩並上傳結果', async () => {
+  const app=Fastify(); registerHttp(app,new RoomService(createDatabase(':memory:')));
+  try {
+    const s=create(); s.paused=false;
+    s.save.state.players.solo.lines=20;
+    s.save.state.players.solo.score=1000;
+    s.advance(1000);
+    assert.equal(Number.isInteger(s.save.state.nextFallAt),false);
+    const restored=new SoloSession(soloSaveSchema.parse(JSON.parse(JSON.stringify(s.save))));
+    restored.paused=false;
+    restored.apply({type:'tetris.surrender'});
+    const response=await app.inject({method:'POST',url:'/api/tetris/solo-results',payload:body(restored)});
+    assert.equal(response.statusCode,201,response.body);
+    const result=await app.inject('/api/results/'+response.json().roomId);
+    assert.equal(result.json().result.score,1000);
+  } finally { await app.close(); }
+});
+
 test('結果 API 拒絕未結束、雙人、錯誤棋盤與負數分數', async () => {
   const app=Fastify(); registerHttp(app,new RoomService(createDatabase(':memory:')));
   const s=create();

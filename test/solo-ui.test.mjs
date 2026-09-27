@@ -48,7 +48,10 @@ test('第二分頁拒絕取得同一局操作權；輸入框不攔截快捷鍵',
 
 test('斷網結果保留並可重試，上傳成功保存憑證與分享連結',async()=>{
   const {w,h,dom,requests}=environment();
-  const s=SoloSession.create('玩家','secret',randomUUID(),'ab'.repeat(32));s.paused=false;s.apply({type:'tetris.surrender'});
+  const s=SoloSession.create('玩家','secret',randomUUID(),'ab'.repeat(32));s.paused=false;
+  s.save.state.players.solo.lines=20;s.advance(1000);
+  assert.equal(Number.isInteger(s.save.state.nextFallAt),false);
+  s.apply({type:'tetris.surrender'});
   w.localStorage.setItem('playroom:tetris:solo:v1',JSON.stringify(s.save));
   const mounted=w.SoloUI.mountSolo(h);await wait();
   assert.equal(requests.length,1);assert.match(h.root.textContent,/尚未上傳/);
