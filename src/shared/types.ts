@@ -25,6 +25,7 @@ export type ClientMessage =
   | { type: 'poll.clearHistory' }
   | { type: 'poll.nextRound'; question: string; options?: PollOption[] }
   | { type: 'tetris.move'; direction: 'left' | 'right' | 'down' }
+  | { type: 'tetris.swap' }
   | { type: 'tetris.rotate' }
   | { type: 'tetris.hardDrop' }
   | { type: 'tetris.surrender' }
@@ -87,6 +88,7 @@ export interface TetrisPlayerState {
   attackPoints: number;
   attackQueue: number[];
   incoming: TetrisPendingGarbage[];
+  swapUsed?: boolean;
   lockAt?: number;
   lost?: boolean;
 }

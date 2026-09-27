@@ -89,3 +89,10 @@ test('結果 API 拒絕未結束、雙人、錯誤棋盤與負數分數', async 
   const asset=await app.inject('/assets/tetris-solo.js');assert.equal(asset.statusCode,200);assert.match(asset.headers['content-type'],/javascript/);
   await app.close();
 });
+
+test('交換狀態可持久保存，舊存檔缺少欄位仍可恢復',()=>{
+  const s=create();delete s.save.state.players.solo.swapUsed;
+  const legacy=soloSaveSchema.parse(s.save);const restored=new SoloSession(legacy);restored.paused=false;
+  restored.apply({type:'tetris.swap'});assert.equal(restored.save.state.players.solo.swapUsed,true);
+  const saved=soloSaveSchema.parse(restored.save);assert.equal(saved.state.players.solo.swapUsed,true);
+});

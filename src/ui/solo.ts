@@ -69,7 +69,7 @@ export async function mountSolo(h: Helpers, start?: { name: string; password: st
       h.root.innerHTML = '<main class="shell"><section class="card tetris-shell local-solo"><header><h1>🧱 TETRIS 單人挑戰</h1><a href="'+h.withBasePath('/games/tetris')+'">← 回大廳</a><p>分數 '+p.score+' · 消行 '+p.lines+' · 等級 '+(Math.floor(p.lines/10)+1)+'</p></header>'+
         (storageFailed ? '<p role="alert">無法保存續玩資料，關閉或重新整理將遺失進度。</p>' : '')+
         (ended ? '<div class="result"><h2>挑戰結束</h2><p>本機運算成績</p><p>'+ (s.uploadedId ? '結果已上傳' : uploading ? '結果上傳中…' : '結果尚未上傳，可稍後重試')+'</p>'+(s.uploadedId ? '<a href="'+h.withBasePath('/results/'+s.uploadedId)+'">查看／分享結果</a>' : '<button data-solo-action="retry">重試上傳</button>')+'<button data-solo-action="new">再玩一局</button></div>' :
-        '<div class="tetris-players solo"><section class="tetris-player you"><div class="tetris-touch-controls controls-'+side()+'"><div class="tetris-control-rail"><div class="tetris-settings-controls"><button data-solo-action="pause">'+(session.paused?'繼續':'暫停')+'</button><button data-solo-action="ghost">投影 '+(ghost()?'開':'關')+'</button><button data-solo-action="side">按鍵靠'+(side()==='left'?'右':'左')+'</button></div><div class="tetris-control-lower"><aside class="tetris-rail-preview">'+h.preview(p.next[0])+'</aside><div class="tetris-touch-side">'+[['rotate','↑','旋轉'],['left','←','左移'],['right','→','右移'],['down','↓','下移']].map(([c,label,n])=>'<button data-solo-control="'+c+'" aria-label="'+n+'">'+label+'<small>'+n+'</small></button>').join('')+'</div></div></div><div class="tetris-touch-board">'+h.boardHtml(p,p.active,ghost())+'</div><button class="tetris-wide-drop" data-solo-control="drop" aria-label="直接落下">空白<small>直接落下</small></button></div></section></div>'+
+        '<div class="tetris-players solo"><section class="tetris-player you"><div class="tetris-touch-controls controls-'+side()+'"><div class="tetris-control-rail"><div class="tetris-settings-controls"><button data-solo-action="pause">'+(session.paused?'繼續':'暫停')+'</button><button data-solo-action="ghost">投影 '+(ghost()?'開':'關')+'</button><button data-solo-action="side">按鍵靠'+(side()==='left'?'右':'左')+'</button></div><div class="tetris-control-lower"><aside class="tetris-rail-preview"><button type="button" class="tetris-swap" data-solo-action="swap" aria-label="交換下一顆方塊，快捷鍵 C" '+(session.paused||session.save.state.gameOver||p.swapUsed?'disabled':'')+'>'+h.preview(p.next[0])+'<span>交換 · C</span></button></aside><div class="tetris-touch-side">'+[['rotate','↑','旋轉'],['left','←','左移'],['right','→','右移'],['down','↓','下移']].map(([c,label,n])=>'<button data-solo-control="'+c+'" aria-label="'+n+'">'+label+'<small>'+n+'</small></button>').join('')+'</div></div></div><div class="tetris-touch-board">'+h.boardHtml(p,p.active,ghost())+'</div><button class="tetris-wide-drop" data-solo-control="drop" aria-label="直接落下">空白<small>直接落下</small></button></div></section></div>'+
         (session.paused ? '<div class="solo-pause" role="dialog" aria-label="遊戲已暫停"><h2>已暫停</h2><button data-solo-action="pause">繼續遊戲</button><a href="'+h.withBasePath('/games/tetris')+'">回大廳</a></div>' : '') )+'</section></main>';
     };
     const upload = async () => {
@@ -85,12 +85,13 @@ export async function mountSolo(h: Helpers, start?: { name: string; password: st
     const control = (c: string) => {
       if (session.paused || session.save.state.gameOver) return;
       sync();
-      const message: ClientMessage = c === 'left' || c === 'right' || c === 'down' ? { type: 'tetris.move', direction: c } : c === 'rotate' ? { type: 'tetris.rotate' } : { type: 'tetris.hardDrop' };
+      const message: ClientMessage = c === 'left' || c === 'right' || c === 'down' ? { type: 'tetris.move', direction: c } : c === 'rotate' ? { type: 'tetris.rotate' } : c === 'swap' ? { type: 'tetris.swap' } : { type: 'tetris.hardDrop' };
       session.apply(message); changed();
     };
     const togglePause = () => { if (session.save.state.gameOver || document.hidden) return; if (session.paused) { last=performance.now(); session.paused=false; changed(); } else pause(); };
     const click = (e: Event) => {
       const action = (e.target as Element).closest<HTMLElement>('[data-solo-action]')?.dataset.soloAction;
+      if (action === 'swap') control('swap');
       if (action === 'pause') togglePause();
       if (action === 'retry') void upload();
       if (action === 'new') { try { sessionStorage.setItem('playroom:tetris:solo:start', JSON.stringify({ name: session.save.name, password: '' })); location.href=h.withBasePath('/games/tetris/solo'); } catch { h.notice('無法儲存開局設定，請回大廳開新局。'); } }
@@ -99,6 +100,7 @@ export async function mountSolo(h: Helpers, start?: { name: string; password: st
     const key = (e: KeyboardEvent) => {
       if ((e.target instanceof Element && e.target.closest('input,textarea,select,[contenteditable]')) || e.ctrlKey || e.metaKey || e.altKey) return;
       if (e.key.toLowerCase()==='p' || e.key==='Escape') { e.preventDefault(); if (!e.repeat) togglePause(); return; }
+      if (e.key.toLowerCase()==='c') { e.preventDefault(); if (!e.repeat) control('swap'); return; }
       const c = ({ArrowLeft:'left',ArrowRight:'right',ArrowDown:'down',ArrowUp:'rotate',' ':'drop'} as Record<string,string>)[e.key];
       if (c) { e.preventDefault(); control(c); }
     };

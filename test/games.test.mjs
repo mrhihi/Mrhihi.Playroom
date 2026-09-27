@@ -470,3 +470,26 @@ test('抽鬼牌每次成功抽牌後重置所有人的洗牌額度', () => {
 test('洗牌使用 Fisher–Yates 並可提供可預期的亂數來源', () => {
   assert.deepEqual(shuffleHand(['a', 'b', 'c'], () => 0), ['b', 'c', 'a']);
 });
+
+test('交換保持位置及時鐘，每顆一次，落地後恢復', () => {
+  const state=tetrisGame.createState([players[0]],{mode:'solo'}),p=state.players.host;
+  p.active={type:'T',rotation:2,x:3,y:10};p.next=['I','O','S','Z'];p.lockAt=12345;
+  const fall=state.nextFallAt,bag=[...p.bag],board=structuredClone(p.board);
+  const apply=type=>tetrisGame.apply(state,{actorId:'host',hostId:'host',players,message:{type},now:100});
+  apply('tetris.swap');
+  assert.deepEqual(p.active,{type:'I',rotation:0,x:3,y:10});assert.deepEqual(p.next,['T','O','S','Z']);
+  assert.equal(p.swapUsed,true);assert.equal(p.lockAt,12345);assert.equal(state.nextFallAt,fall);
+  assert.deepEqual(p.board,board);assert.deepEqual(p.bag,bag);assert.equal(p.score,0);
+  const swapped=structuredClone(p);apply('tetris.swap');assert.deepEqual(p,swapped);
+  apply('tetris.hardDrop');assert.equal(p.swapUsed,false);assert.equal(p.active.type,'T');
+  apply('tetris.swap');assert.equal(p.active.type,'O');assert.equal(p.swapUsed,true);
+});
+
+test('交換碰撞或超出邊界時不消耗次數，對戰不觸發攻擊',()=>{
+  const state=tetrisGame.createState(players,{}),p=state.players.host;
+  p.active={type:'O',rotation:0,x:7,y:10};p.next=['I','T','S','Z'];p.attackQueue=[2];
+  const apply=()=>tetrisGame.apply(state,{actorId:'host',hostId:'host',players,message:{type:'tetris.swap'}});
+  let before=structuredClone(state);apply();assert.deepEqual(state,before);
+  p.active.x=3;p.board[11][3]='Z';before=structuredClone(state);apply();assert.deepEqual(state,before);
+  p.board[11][3]=null;apply();assert.equal(p.swapUsed,true);assert.deepEqual(p.attackQueue,[2]);assert.deepEqual(state.players.guest.incoming,[]);
+});

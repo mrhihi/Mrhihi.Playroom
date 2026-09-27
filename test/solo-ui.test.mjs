@@ -83,3 +83,24 @@ test('存檔損壞提示重開，儲存失敗仍可在本次頁面遊玩並上�
   w.Storage.prototype.setItem=original;
   w.dispatchEvent(new w.Event('pagehide'));await mounted;dom.window.close();
 });
+
+test('交換按鈕與 C 快捷鍵保留存檔限制，忽略長按和輸入欄位',async()=>{
+  const {w,h,dom}=environment();const mounted=w.SoloUI.mountSolo(h,{name:'交換',password:''});await wait();
+  const before=saved(w).state.players.solo;
+  w.document.dispatchEvent(new w.KeyboardEvent('keydown',{key:'C',repeat:true,bubbles:true}));
+  assert.equal(saved(w).state.players.solo.swapUsed,false);
+  const input=w.document.createElement('input');h.root.append(input);
+  input.dispatchEvent(new w.KeyboardEvent('keydown',{key:'c',bubbles:true}));
+  w.document.dispatchEvent(new w.KeyboardEvent('keydown',{key:'c',ctrlKey:true,bubbles:true}));
+  assert.equal(saved(w).state.players.solo.swapUsed,false);
+  w.document.dispatchEvent(new w.KeyboardEvent('keydown',{key:'C',bubbles:true}));
+  let p=saved(w).state.players.solo;assert.equal(p.active.type,before.next[0]);assert.equal(p.next[0],before.active.type);assert.equal(p.swapUsed,true);
+  assert.equal(h.root.querySelector('[data-solo-action="swap"]').disabled,true);
+  w.dispatchEvent(new w.Event('pagehide'));await mounted;
+  const resumed=w.SoloUI.mountSolo(h);await wait();assert.equal(saved(w).state.players.solo.swapUsed,true);
+  h.root.querySelector('.solo-pause button').click();
+  w.document.dispatchEvent(new w.KeyboardEvent('keydown',{key:' ',bubbles:true}));
+  assert.equal(saved(w).state.players.solo.swapUsed,false);
+  h.root.querySelector('[data-solo-action="swap"]').click();assert.equal(saved(w).state.players.solo.swapUsed,true);
+  w.dispatchEvent(new w.Event('pagehide'));await resumed;dom.window.close();
+});

@@ -17,7 +17,7 @@ const cells = (piece: TetrisPiece) => SHAPES[piece.type][piece.rotation % SHAPES
 const valid = (player: TetrisPlayerState, piece: TetrisPiece) => cells(piece).every(([x, y]) => x >= 0 && x < W && y < H && (y < 0 || !player.board[y][x]));
 const interval = (state: TetrisState) => { const level = Math.max(...Object.values(state.players).map(p => Math.floor(p.lines / 10) + 1)); return Math.max(50, 1000 * (0.8 - .007 * (level - 1)) ** (level - 1)); };
 const refill = (player: TetrisPlayerState) => { while (player.next.length < 4) { if (!player.bag.length) player.bag = shuffle(TYPES); player.next.push(player.bag.pop()!); } };
-const spawn = (player: TetrisPlayerState) => { player.lockAt = undefined; refill(player); player.active = { type: player.next.shift()!, rotation: 0, x: 3, y: -1 }; refill(player); if (!valid(player, player.active)) player.lost = true; };
+const spawn = (player: TetrisPlayerState) => { player.swapUsed = false; player.lockAt = undefined; refill(player); player.active = { type: player.next.shift()!, rotation: 0, x: 3, y: -1 }; refill(player); if (!valid(player, player.active)) player.lost = true; };
 const queueAttack = (state: TetrisState, id: string, lines: number, now: number) => {
   const player = state.players[id]; let left = lines;
   for (const incoming of player.incoming.sort((a, b) => a.dueAt - b.dueAt)) { const used = Math.min(left, incoming.lines); incoming.lines -= used; left -= used; if (!left) break; }
@@ -88,6 +88,14 @@ export const tetrisGame: GameModule<TetrisState> = {
     if (message.type === 'tetris.surrender') { player.lost = true; resolveLoss(state); return { eventType: 'tetris.surrender', payload: { playerId: actorId }, finished: true }; }
     if (message.type === 'tetris.attack') { if (state.mode === 'solo') throw new Error('單人模式沒有攻擊'); const lines = Math.floor(message.lines); if (lines < 1 || lines > 4) throw new Error('攻擊必須為 1 到 4 排'); if (player.attackQueue.length >= 4) throw new Error('攻擊佇列已滿'); if (player.attackPoints < lines) throw new Error('攻擊點數不足'); player.attackPoints -= lines; player.attackQueue.push(lines); return { eventType: 'tetris.attackQueued', payload: { playerId: actorId, lines } }; }
     if (message.type === 'tetris.move') { if (message.direction === 'down') down(state, actorId, now); else { const next = { ...player.active, x: player.active.x + (message.direction === 'left' ? -1 : 1) }; if (valid(player, next)) { player.active = next; if (valid(player, { ...next, y: next.y + 1 })) player.lockAt = undefined; } } }
+    else if (message.type === 'tetris.swap') {
+      const candidate = { ...player.active, type: player.next[0], rotation: 0 };
+      if (!player.swapUsed && valid(player, candidate)) {
+        player.next[0] = player.active.type;
+        player.active = candidate;
+        player.swapUsed = true;
+      }
+    }
     else if (message.type === 'tetris.rotate') { const rotations = SHAPES[player.active.type].length; const candidate = { ...player.active, rotation: (player.active.rotation + 1) % rotations }; for (const kick of [0, -1, 1, -2, 2]) { const next = { ...candidate, x: candidate.x + kick }; if (valid(player, next)) { player.active = next; if (valid(player, { ...next, y: next.y + 1 })) player.lockAt = undefined; break; } } }
     else if (message.type === 'tetris.hardDrop') { let next = { ...player.active }; while (valid(player, { ...next, y: next.y + 1 })) next = { ...next, y: next.y + 1 }; player.active = next; releaseAttack(state, actorId, now); lock(state, actorId, now); }
     else throw new Error('無效的俄羅斯方塊操作');

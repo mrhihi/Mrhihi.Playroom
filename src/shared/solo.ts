@@ -12,7 +12,7 @@ export const soloStateSchema = z.object({
     next: z.array(piece).length(4), bag: z.array(piece).max(7),
     lines: integer, score: integer, attackPoints: z.literal(0),
     attackQueue: z.array(z.never()).length(0), incoming: z.array(z.never()).length(0),
-    lockAt: integer.optional(), lost: z.boolean().optional(),
+    swapUsed: z.boolean().optional(), lockAt: integer.optional(), lost: z.boolean().optional(),
   }).strict() }).strict(),
   // Gravity intervals become fractional as the level increases. Existing
   // saves retain that precision, so accept the game's actual clock values.
