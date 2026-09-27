@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises';
+import { ZodError } from 'zod';
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify'; import type { GameType } from './shared/types.js'; import { config, supportedGames } from './config.js'; import { RoomService } from './rooms.js'; import { page } from './ui/page.js';
 const parse = <T>(value: string | null, fallback: T): T => { try { return value ? JSON.parse(value) as T : fallback; } catch { return fallback; } };
@@ -7,6 +9,11 @@ const ownerDeleteToken = (request: { headers: Record<string, unknown> }) => Stri
 export function registerHttp(app: FastifyInstance, rooms: RoomService) {
   const adminTokens = new Map<string, number>();
   const admin = (request: { headers: Record<string, unknown> }) => { const token = request.headers['x-admin-token']; const expires = typeof token === 'string' ? adminTokens.get(token) : undefined; return Boolean(expires && expires > Date.now()); };
+  app.get('/assets/tetris-solo.js', async (_request, reply) => reply.type('application/javascript').header('cache-control', 'no-cache').send(await readFile(new URL(import.meta.url.includes('/dist/') ? './browser/solo.js' : '../dist/browser/solo.js', import.meta.url))));
+  app.post('/api/tetris/solo-results', { bodyLimit: 16_384 }, async (request, reply) => {
+    try { return reply.code(201).send(rooms.submitSoloResult(request.body)); }
+    catch (error) { return reply.code(error instanceof ZodError ? 400 : 409).send({ error: error instanceof ZodError ? '單人結果資料格式不正確' : error instanceof Error ? error.message : '無法保存結果' }); }
+  });
   app.get('/api/health', async () => ({ ok: true }));
   app.post('/api/admin/login', async (request, reply) => { if (!config.adminPassword) return reply.code(503).send({ error: '尚未設定 ADMIN_PASSWORD' }); if ((request.body as { password?: string }).password !== config.adminPassword) return reply.code(401).send({ error: '管理者密碼錯誤' }); const token = randomBytes(24).toString('base64url'); adminTokens.set(token, Date.now() + 8 * 60 * 60_000); return { token, expiresAt: Date.now() + 8 * 60 * 60_000 }; });
   app.get('/api/admin/rooms', async (request, reply) => { if (!admin(request)) return reply.code(401).send({ error: '需要管理者登入' }); return { rooms: rooms.listAll() }; });

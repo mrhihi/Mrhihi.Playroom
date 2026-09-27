@@ -13,7 +13,18 @@ export function createDatabase(file: string) {
   const messageColumns = new Set((db.prepare('PRAGMA table_info(messages)').all() as { name: string }[]).map(row => row.name));
   for (const [name, type] of [['channel_id', 'TEXT'], ['channel_type', 'TEXT']] as const) if (!messageColumns.has(name)) db.exec(`ALTER TABLE messages ADD COLUMN ${name} ${type}`);
   db.exec("UPDATE messages SET channel_id=COALESCE(channel_id,session_id), channel_type=COALESCE(channel_type,'room')");
+  db.exec(`CREATE TABLE IF NOT EXISTS solo_submissions (submission_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, owner_hash TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS solo_submission_session ON solo_submissions(session_id);`);
   return {
+    getSoloSubmission(id: string) { return db.prepare('SELECT session_id,owner_hash FROM solo_submissions WHERE submission_id=?').get(id) as { session_id: string; owner_hash: string } | undefined; },
+    saveSoloResult(submissionId: string, room: RoomSnapshot, passwordHash: string | null, ownerHash: string, result: unknown) {
+      db.transaction(() => {
+        const now = Date.now();
+        db.prepare('INSERT INTO sessions(id,game,host_id,password_hash,owner_delete_token_hash,config,status,created_at,result,finished_at,final_state) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(room.id, 'tetris', room.hostId, passwordHash, ownerHash, JSON.stringify(room.config), 'finished', now, JSON.stringify(result), now, JSON.stringify(room.state));
+        db.prepare('INSERT INTO solo_submissions VALUES(?,?,?)').run(submissionId, room.id, ownerHash);
+        db.prepare('INSERT INTO events(session_id,version,type,payload,created_at) VALUES(?,?,?,?,?)').run(room.id, 1, 'game.started', JSON.stringify(room.config), now);
+      })();
+    },
     saveSession(room: RoomSnapshot, passwordHash: string | null, ownerDeleteTokenHash: string) { db.prepare('INSERT INTO sessions(id,game,host_id,password_hash,owner_delete_token_hash,config,status,created_at,result,finished_at,final_state) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(room.id, room.game, room.hostId, passwordHash, ownerDeleteTokenHash, JSON.stringify(room.config), room.status, Date.now(), null, null, null); },
     finishSession(room: RoomSnapshot, result: unknown) { db.prepare('UPDATE sessions SET status=?, finished_at=?, result=?, final_state=? WHERE id=?').run('finished', Date.now(), JSON.stringify(result), JSON.stringify(room.state), room.id); },
     getSession(id: string) { return db.prepare('SELECT * FROM sessions WHERE id=?').get(id) as StoredSession | undefined; },

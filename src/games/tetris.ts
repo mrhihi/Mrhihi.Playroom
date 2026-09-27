@@ -83,9 +83,8 @@ export const tetrisGame: GameModule<TetrisState> = {
     for (const player of players) { const value: TetrisPlayerState = { board: board(), active: { type: 'T', rotation: 0, x: 3, y: -1 }, next: [], bag: [], lines: 0, score: 0, attackPoints: 0, attackQueue: [], incoming: [] }; state.players[player.id] = value; spawn(value); }
     return state;
   },
-  apply(state, { actorId, message }) {
+  apply(state, { actorId, message, now = Date.now() }) {
     const player = state.players[actorId]; if (!player || player.lost || state.winnerId || state.draw || state.gameOver) throw new Error('目前不能操作');
-    const now = Date.now();
     if (message.type === 'tetris.surrender') { player.lost = true; resolveLoss(state); return { eventType: 'tetris.surrender', payload: { playerId: actorId }, finished: true }; }
     if (message.type === 'tetris.attack') { if (state.mode === 'solo') throw new Error('單人模式沒有攻擊'); const lines = Math.floor(message.lines); if (lines < 1 || lines > 4) throw new Error('攻擊必須為 1 到 4 排'); if (player.attackQueue.length >= 4) throw new Error('攻擊佇列已滿'); if (player.attackPoints < lines) throw new Error('攻擊點數不足'); player.attackPoints -= lines; player.attackQueue.push(lines); return { eventType: 'tetris.attackQueued', payload: { playerId: actorId, lines } }; }
     if (message.type === 'tetris.move') { if (message.direction === 'down') down(state, actorId, now); else { const next = { ...player.active, x: player.active.x + (message.direction === 'left' ? -1 : 1) }; if (valid(player, next)) { player.active = next; if (valid(player, { ...next, y: next.y + 1 })) player.lockAt = undefined; } } }

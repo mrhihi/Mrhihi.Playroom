@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import type { ClientMessage, GameType, Player, PollState, RoomSnapshot } from './shared/types.js';
 import type { DatabasePort } from './db.js';
+import { soloResultSchema } from './shared/solo.js';
 import { getGame } from './games/index.js';
 
 export type Room = RoomSnapshot & {
@@ -55,6 +56,21 @@ export class RoomService {
     const ownerDeleteToken = randomBytes(32).toString('base64url');
     this.db.saveSession(room, room.passwordHash, hashPassword(ownerDeleteToken));
     return { room, hostId, reconnectToken: this.issueToken(room, hostId), ownerDeleteToken, accessToken: password ? this.grantAccess(id) : '' };
+  }
+
+  submitSoloResult(body: unknown) {
+    const data = soloResultSchema.parse(body);
+    const previous = this.db.getSoloSubmission(data.submissionId);
+    if (previous && !matchesHash(data.ownerDeleteToken, previous.owner_hash)) throw new Error('結果提交憑證不符');
+    if (previous && !this.db.getSession(previous.session_id)) throw new Error('此結果已刪除');
+    const id = previous?.session_id ?? makeRoomId();
+    if (!previous) {
+      const snapshot: RoomSnapshot = { id, game: 'tetris', status: 'finished', hostId: 'solo', players: [{ id: 'solo', name: data.name, connected: false }], spectators: [], config: { mode: 'solo', localSolo: true, allowSpectators: false }, state: data.state, messages: [], stateVersion: 1 };
+      const player = data.state.players.solo;
+      this.db.saveSoloResult(data.submissionId, snapshot, data.password ? hashPassword(data.password) : null, hashPassword(data.ownerDeleteToken), { playerId: 'solo', playerName: data.name, score: player.score, lines: player.lines, level: Math.floor(player.lines / 10) + 1, elapsedMs: data.elapsedMs, source: 'local' });
+    }
+    const accessToken = this.db.getSession(id)?.password_hash ? this.grantAccess(id) : '';
+    return { roomId: id, url: '/results/' + id, accessToken };
   }
 
   issueToken(room: Room, playerId: string) {

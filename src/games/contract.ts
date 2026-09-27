@@ -1,6 +1,7 @@
 import type { ClientMessage, GameType, Player } from '../shared/types.js';
 
 export interface GameActionContext {
+  now?: number;
   actorId: string;
   hostId: string;
   players: Player[];
