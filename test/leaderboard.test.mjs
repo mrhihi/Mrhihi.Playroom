@@ -56,7 +56,7 @@ test('舊單人回填一次，持久化且刪除後不復活',()=>{
 test('大廳分頁、空榜、重試與暱名安全顯示',async()=>{
  const dom=new JSDOM('<div id="app"></div>',{url:'http://localhost/',runScripts:'outside-only'}),w=dom.window;
  w.eval(clientScript+'\nwindow.root=root;');w.eval("root.innerHTML=tetrisLeaderboardHtml()");let failure=false,calls=[];
- w.fetch=async url=>{calls.push(url);if(failure)throw Error('offline');return {ok:true,json:async()=>({entries:url.includes('versus')?[]:[{rank:1,playerId:'12345678-aaaa',name:'<img src=x onerror=alert(1)>',score:100,lines:2,level:1,finishedAt:0,roomId:'abcdefg'}]})}};
+ w.fetch=async url=>{calls.push(url);if(failure)throw Error('offline');return {ok:true,json:async()=>({entries:url.includes('versus')?[]:[{rank:1,identityId:'12345678-aaaa',name:'<img src=x onerror=alert(1)>',score:100,lines:2,level:1,finishedAt:0,roomId:'abcdefg'}]})}};
  w.eval('mountTetrisLeaderboard()');const settle=()=>new Promise(r=>setTimeout(r,5));await settle();
  assert.equal(w.document.querySelector('.leaderboard-content img'),null);assert.match(w.document.querySelector('.leaderboard-content').textContent,/<img/);
  w.document.querySelector('[data-ranking-mode="versus"]').click();await settle();assert.match(w.document.querySelector('.leaderboard-content').textContent,/尚無對戰/);
@@ -69,11 +69,11 @@ test('大廳分頁、空榜、重試與暱名安全顯示',async()=>{
 test('排行短碼碰撞、同一身分與完整識別碼安全顯示',()=>{
  const dom=new JSDOM('<div id="app"></div>',{url:'http://localhost/',runScripts:'outside-only'}),w=dom.window;
  w.eval(clientScript+'\nwindow.identity=tetrisPlayerIdentity;');
- const entries=[{playerId:'12345678-aaaa'},{playerId:'12345678-bbbb'},{playerId:'12345678-aaaa'}];
+ const entries=[{identityId:'12345678-aaaa'},{identityId:'12345678-bbbb'},{identityId:'12345678-aaaa'}];
  w.document.querySelector('#app').innerHTML=w.identity(entries[0],entries);
- const summary=w.document.querySelector('summary');assert.equal(summary.textContent,'#12345678-a');assert.equal(summary.title,entries[0].playerId);
- assert.equal(w.document.querySelector('small').textContent,entries[0].playerId);
+ const summary=w.document.querySelector('summary');assert.equal(summary.textContent,'#12345678-a');assert.equal(summary.title,entries[0].identityId);
+ assert.equal(w.document.querySelector('small').textContent,entries[0].identityId);
  w.document.querySelector('#app').innerHTML=w.identity(entries[0],[entries[0],entries[2]]);assert.equal(w.document.querySelector('summary').textContent,'#12345678');
- const unsafe={playerId:'<img src=x onerror=alert(1)>'};w.document.querySelector('#app').innerHTML=w.identity(unsafe,[unsafe]);assert.equal(w.document.querySelector('img'),null);assert.equal(w.document.querySelector('summary').title,unsafe.playerId);
+ const unsafe={identityId:'<img src=x onerror=alert(1)>'};w.document.querySelector('#app').innerHTML=w.identity(unsafe,[unsafe]);assert.equal(w.document.querySelector('img'),null);assert.equal(w.document.querySelector('summary').title,unsafe.identityId);
  w.close();
 });

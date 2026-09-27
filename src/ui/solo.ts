@@ -1,3 +1,4 @@
+import { browserIdentity, detectDevice } from './identity.js';
 import { SoloSession, soloSaveSchema, type SoloSave } from '../shared/solo.js';
 import type { ClientMessage } from '../shared/types.js';
 const SAVE = 'playroom:tetris:solo:v1', QUEUE = 'playroom:tetris:solo:pending';
@@ -18,8 +19,13 @@ export function retryPending(h: Helpers, fallback?: SoloSave): Promise<void> {
       const parsed = soloSaveSchema.safeParse(raw);
       if (!parsed.success || !parsed.data.state.gameOver) continue;
       const save = parsed.data;
+      if (!save.identityId) {
+        save.identityId = browserIdentity();
+        pending[save.submissionId] = save;
+        try { localStorage.setItem(QUEUE, JSON.stringify({ ...(read(QUEUE) || {}), [save.submissionId]: save })); } catch { /* Retry can use this in-memory save. */ }
+      }
       try {
-        const response = await fetch(h.withBasePath('/api/tetris/solo-results'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ submissionId: save.submissionId, ownerDeleteToken: save.ownerDeleteToken, name: save.name, password: save.password, elapsedMs: save.elapsedMs, state: save.state }) });
+        const response = await fetch(h.withBasePath('/api/tetris/solo-results'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ identityId: save.identityId, deviceInfo: save.deviceInfo, submissionId: save.submissionId, ownerDeleteToken: save.ownerDeleteToken, name: save.name, password: save.password, elapsedMs: save.elapsedMs, state: save.state }) });
         const data = await response.json();
         if (!response.ok) throw new Error(data.error);
         try {
@@ -28,7 +34,7 @@ export function retryPending(h: Helpers, fallback?: SoloSave): Promise<void> {
         localStorage.setItem('playroom:owner:' + data.roomId, save.ownerDeleteToken);
         localStorage.setItem('playroom:access:' + data.roomId, JSON.stringify(data.accessToken));
         const current = read(SAVE);
-        if (current?.submissionId === save.submissionId) localStorage.setItem(SAVE, JSON.stringify({ ...current, uploadedId: data.roomId, password: '' }));
+        if (current?.submissionId === save.submissionId) localStorage.setItem(SAVE, JSON.stringify({ ...current, identityId: save.identityId, uploadedId: data.roomId, password: '' }));
         const queue = read(QUEUE) || {}; delete queue[save.submissionId]; localStorage.setItem(QUEUE, JSON.stringify(queue));
         } catch { h.notice('結果已上傳，但無法儲存本機紀錄與刪除憑證，請保存結果連結。'); }
         window.dispatchEvent(new CustomEvent('solo-uploaded', { detail: { submissionId: save.submissionId, roomId: data.roomId } }));
@@ -49,6 +55,8 @@ export async function mountSolo(h: Helpers, start?: { name: string; password: st
       h.root.innerHTML = '<main class="shell"><section class="card"><a href="'+h.withBasePath('/games/tetris')+'">← 回大廳開新局</a><p>沒有可續玩的單人遊戲。</p></section></main>'; return;
     }
     const session = start ? SoloSession.create(start.name, start.password, crypto.randomUUID(), secret()) : new SoloSession(parsed.success ? parsed.data : {} as SoloSave);
+    session.save.identityId ??= browserIdentity();
+    if (start) session.save.deviceInfo = detectDevice();
     session.paused = !start || document.hidden || !document.hasFocus();
     let storageFailed = false, last = performance.now(), held: string | undefined, delay: ReturnType<typeof setTimeout> | undefined, repeat: ReturnType<typeof setInterval> | undefined, uploading = false;
     const persist = () => { try { localStorage.setItem(SAVE, JSON.stringify(session.save)); } catch { storageFailed = true; } };

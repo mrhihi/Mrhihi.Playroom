@@ -1,7 +1,8 @@
+import type { DeviceInfo } from './identity.js';
 export type GameType = 'race' | 'old-maid' | 'poll' | 'tetris';
 export type RoomStatus = 'lobby' | 'playing' | 'finished';
 
-export interface Player { id: string; name: string; connected: boolean; score?: number; }
+export interface Player { id: string; name: string; connected: boolean; score?: number; identityId?: string; deviceInfo?: DeviceInfo; }
 export interface RoomSnapshot {
   id: string; game: GameType; status: RoomStatus; hostId: string;
   players: Player[]; config: Record<string, unknown>; state: unknown;
@@ -11,7 +12,7 @@ export interface RoomSnapshot {
 }
 
 export type ClientMessage =
-  | { type: 'join'; name: string; password?: string; reconnectToken?: string; observer?: boolean }
+  | { type: 'join'; name: string; password?: string; reconnectToken?: string; observer?: boolean; identityId?: string; deviceInfo?: DeviceInfo }
   | { type: 'player.rename'; name: string }
   | { type: 'host.start'; config?: Record<string, unknown> }
   | { type: 'race.clickBatch'; count: number; clientSequence: number }

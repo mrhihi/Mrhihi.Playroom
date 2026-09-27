@@ -1,3 +1,4 @@
+import { identitySchema } from './identity.js';
 import { z } from 'zod';
 import { tetrisGame } from '../games/tetris.js';
 import type { ClientMessage, TetrisState } from './types.js';
@@ -21,12 +22,12 @@ export const soloResultSchema = z.object({
   submissionId: z.string().uuid(), ownerDeleteToken: z.string().regex(/^[a-f0-9]{64}$/),
   name: z.string().trim().min(1).max(24), password: z.string().max(128).default(''),
   elapsedMs: integer, state: soloStateSchema,
-}).strict().refine(v => v.state.gameOver === true && v.state.players.solo.lost === true, '遊戲尚未結束');
+}).extend(identitySchema.shape).strict().refine(v => v.state.gameOver === true && v.state.players.solo.lost === true, '遊戲尚未結束');
 export const soloSaveSchema = z.object({
   version: z.literal(1), submissionId: z.string().uuid(), ownerDeleteToken: z.string().regex(/^[a-f0-9]{64}$/),
   name: z.string().min(1).max(24), password: z.string().max(128), elapsedMs: integer,
   state: soloStateSchema, uploadedId: z.string().optional(),
-}).strict();
+}).extend(identitySchema.shape).strict();
 export type SoloSave = z.infer<typeof soloSaveSchema>;
 
 /** A clock which never advances while paused, independent of wall-clock time. */

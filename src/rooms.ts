@@ -1,3 +1,4 @@
+import { identitySchema, type DeviceInfo } from './shared/identity.js';
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import type { ClientMessage, GameType, Player, PollState, RoomSnapshot } from './shared/types.js';
 import type { DatabasePort } from './db.js';
@@ -5,6 +6,7 @@ import { soloResultSchema } from './shared/solo.js';
 import { getGame } from './games/index.js';
 
 export type Room = RoomSnapshot & {
+  latestDevices: Map<string, DeviceInfo | undefined>;
   clients: Map<string, import('ws').WebSocket>;
   tokens: Map<string, string>;
   passwordHash: string | null;
@@ -30,10 +32,11 @@ export class RoomService {
 
   constructor(private readonly db: DatabasePort) {}
 
-  create(game: GameType, hostName: string, config: Record<string, unknown>, password?: string, hostObserver = false) {
+  create(game: GameType, hostName: string, config: Record<string, unknown>, password?: string, hostObserver = false, identity: unknown = {}) {
+    const metadata = identitySchema.parse(identity);
     const id = makeRoomId();
     const hostId = randomUUID();
-    const host = { id: hostId, name: uniqueName(hostName, []), connected: false };
+    const host = { ...metadata, id: hostId, name: uniqueName(hostName, []), connected: false };
     const observerHost = game === 'poll' && hostObserver;
     const room: Room = {
       id,
@@ -47,6 +50,7 @@ export class RoomService {
       state: {},
       messages: [],
       stateVersion: 0,
+      latestDevices: new Map([[hostId, metadata.deviceInfo]]),
       clients: new Map(),
       tokens: new Map(),
       passwordHash: password ? hashPassword(password) : null,
@@ -65,7 +69,7 @@ export class RoomService {
     if (previous && !this.db.getSession(previous.session_id)) throw new Error('此結果已刪除');
     const id = previous?.session_id ?? makeRoomId();
     if (!previous) {
-      const snapshot: RoomSnapshot = { id, game: 'tetris', status: 'finished', hostId: 'solo', players: [{ id: 'solo', name: data.name, connected: false }], spectators: [], config: { mode: 'solo', localSolo: true, allowSpectators: false }, state: data.state, messages: [], stateVersion: 1 };
+      const snapshot: RoomSnapshot = { id, game: 'tetris', status: 'finished', hostId: 'solo', players: [{ identityId: data.identityId, deviceInfo: data.deviceInfo, id: 'solo', name: data.name, connected: false }], spectators: [], config: { mode: 'solo', localSolo: true, allowSpectators: false }, state: data.state, messages: [], stateVersion: 1 };
       const player = data.state.players.solo;
       this.db.saveSoloResult(data.submissionId, snapshot, data.password ? hashPassword(data.password) : null, hashPassword(data.ownerDeleteToken), { playerId: 'solo', playerName: data.name, score: player.score, lines: player.lines, level: Math.floor(player.lines / 10) + 1, elapsedMs: data.elapsedMs, source: 'local' });
     }
@@ -110,6 +114,7 @@ export class RoomService {
     room.config = { ...room.config, ...config };
     const game = getGame(room.game);
     if (room.game === 'tetris' && room.players.length !== (room.config.mode === 'solo' ? 1 : 2)) throw new Error(room.config.mode === 'solo' ? '單人俄羅斯方塊需要一位玩家才能開始' : '俄羅斯方塊需要兩位玩家才能開始');
+    if (room.game === 'tetris') for (const player of room.players) player.deviceInfo = room.latestDevices.get(player.id);
     room.state = game.createState(room.players, room.config);
     room.status = 'playing';
     room.stateVersion++;
@@ -146,7 +151,8 @@ export class RoomService {
     return { loserId: state.loserId, loserName: room.players.find(player => player.id === state.loserId)?.name };
   }
 
-  addPlayer(room: Room, name: string, token?: string, observer = false) {
+  addPlayer(room: Room, name: string, token?: string, observer = false, identity: unknown = {}) {
+    const metadata = identitySchema.parse(identity);
     const existingId = token ? room.tokens.get(token) : undefined;
     const id = existingId ?? randomUUID();
     let reconnected = false;
@@ -157,19 +163,20 @@ export class RoomService {
     } else {
       const people = [...room.players, ...room.spectators];
       if (room.game === 'poll' && observer) {
-        room.spectators.push({ id, name: uniqueName(name, people.map(player => player.name)), connected: true });
+        room.spectators.push({ ...metadata, id, name: uniqueName(name, people.map(player => player.name)), connected: true });
         room.memberRoles.set(id, 'spectator');
       } else if (room.game === 'tetris' && (room.status === 'playing' || room.config.mode === 'solo')) {
         if (room.config.allowSpectators === false) throw new Error('本局未開放觀戰');
-        room.spectators.push({ id, name: uniqueName(name, people.map(player => player.name)), connected: true });
+        room.spectators.push({ ...metadata, id, name: uniqueName(name, people.map(player => player.name)), connected: true });
         room.memberRoles.set(id, 'spectator');
       } else {
         if (room.game === 'tetris' && room.players.length >= 2) throw new Error('俄羅斯方塊大廳僅限兩位玩家');
-        room.players.push({ id, name: uniqueName(name, people.map(player => player.name)), connected: true });
+        room.players.push({ ...metadata, id, name: uniqueName(name, people.map(player => player.name)), connected: true });
         room.memberRoles.set(id, 'player');
       }
     }
 
+    if (metadata.deviceInfo) room.latestDevices.set(id, metadata.deviceInfo);
     return { id, reconnectToken: existingId ? token! : this.issueToken(room, id), reconnected, role: room.memberRoles.get(id) ?? 'player' };
   }
 

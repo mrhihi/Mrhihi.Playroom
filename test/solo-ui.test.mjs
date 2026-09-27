@@ -24,6 +24,7 @@ test('本地頁操作不傳網路；快捷鍵、失焦與重新整理保持暫�
   const {w,h,dom,requests}=environment();
   const mounted=w.SoloUI.mountSolo(h,{name:'測試',password:''});await wait();
   w.document.dispatchEvent(new w.KeyboardEvent('keydown',{key:'ArrowLeft',bubbles:true}));
+  const identity=saved(w).identityId,device=saved(w).deviceInfo;assert.equal(identity,w.localStorage.getItem('playroom:player-id'));
   const x=saved(w).state.players.solo.active.x;assert.equal(x,2);assert.equal(requests.length,0);
   w.document.dispatchEvent(new w.KeyboardEvent('keydown',{key:'p',bubbles:true}));
   assert.ok(h.root.querySelector('[role="dialog"]'));
@@ -34,7 +35,7 @@ test('本地頁操作不傳網路；快捷鍵、失焦與重新整理保持暫�
   w.dispatchEvent(new w.Event('blur'));assert.ok(h.root.querySelector('[role="dialog"]'));
   w.dispatchEvent(new w.Event('pagehide'));await mounted;
   const resumed=w.SoloUI.mountSolo(h);await wait();assert.ok(h.root.querySelector('[role="dialog"]'),h.root.textContent+' '+JSON.stringify(saved(w)));
-  assert.equal(saved(w).state.players.solo.active.x,x);assert.equal(requests.length,0);
+  assert.equal(saved(w).identityId,identity);assert.deepEqual(saved(w).deviceInfo,device);assert.equal(saved(w).state.players.solo.active.x,x);assert.equal(requests.length,0);
   w.dispatchEvent(new w.Event('pagehide'));await resumed;dom.window.close();
 });
 
@@ -51,6 +52,7 @@ test('斷網結果保留並可重試，上傳成功保存憑證與分享連結',
   const s=SoloSession.create('玩家','secret',randomUUID(),'ab'.repeat(32));s.paused=false;
   s.save.state.players.solo.lines=20;s.advance(1000);
   assert.equal(Number.isInteger(s.save.state.nextFallAt),false);
+  s.save.identityId=randomUUID();s.save.deviceInfo={deviceType:'tablet',os:'Android',browser:'Chrome'};
   s.apply({type:'tetris.surrender'});
   w.localStorage.setItem('playroom:tetris:solo:v1',JSON.stringify(s.save));
   const mounted=w.SoloUI.mountSolo(h);await wait();
@@ -63,6 +65,7 @@ test('斷網結果保留並可重試，上傳成功保存憑證與分享連結',
   assert.deepEqual(JSON.parse(w.localStorage.getItem('playroom:tetris:solo:pending')),{});
   assert.ok(h.root.querySelector('a[href="/prefix/results/abcd234"]'));
   assert.equal(requests[1].url,'/prefix/api/tetris/solo-results');
+  for(const request of requests){const body=JSON.parse(request.options.body);assert.equal(body.identityId,s.save.identityId);assert.deepEqual(body.deviceInfo,s.save.deviceInfo);}
   w.dispatchEvent(new w.Event('pagehide'));await mounted;dom.window.close();
 });
 

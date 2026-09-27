@@ -1,7 +1,8 @@
+import { deviceInfoSchema, type DeviceInfo } from './shared/identity.js';
 import Database from 'better-sqlite3';
 import type { GameType, RoomSnapshot } from './shared/types.js';
 export type StoredSession = { id: string; game: GameType; host_id: string; password_hash: string | null; owner_delete_token_hash: string | null; config: string; status: string; created_at: number; finished_at: number | null; result: string | null; final_state: string | null };
-export type TetrisLeaderboardEntry = { id: string; roomId: string; playerId: string; mode: 'solo' | 'versus'; name: string; score: number; lines: number; level: number; outcome: 'win' | 'loss' | 'draw' | null; opponent: string | null; finishedAt: number };
+export type TetrisLeaderboardEntry = { id: string; roomId: string; playerId: string; identityId: string | null; deviceInfo: DeviceInfo | null; mode: 'solo' | 'versus'; name: string; score: number; lines: number; level: number; outcome: 'win' | 'loss' | 'draw' | null; opponent: string | null; finishedAt: number };
 export type StoredMessage = { id: string; channel_id: string; channel_type: string; player_name: string; text: string; created_at: number };
 export function createDatabase(file: string) {
   const db = new Database(file); db.pragma('journal_mode = WAL');
@@ -23,7 +24,9 @@ export function createDatabase(file: string) {
     CREATE INDEX IF NOT EXISTS tetris_scores_ranking ON tetris_scores(mode,score DESC,lines DESC,finished_at,id);
     CREATE INDEX IF NOT EXISTS tetris_scores_room ON tetris_scores(room_id);
     CREATE TABLE IF NOT EXISTS data_migrations (id TEXT PRIMARY KEY);`);
-  const insertScore = db.prepare('INSERT OR IGNORE INTO tetris_scores VALUES(?,?,?,?,?,?,?,?,?,?)');
+  const scoreColumns = new Set((db.prepare('PRAGMA table_info(tetris_scores)').all() as { name: string }[]).map(row => row.name));
+  for (const name of ['identity_id', 'device_info']) if (!scoreColumns.has(name)) db.exec(`ALTER TABLE tetris_scores ADD COLUMN ${name} TEXT`);
+  const insertScore = db.prepare('INSERT OR IGNORE INTO tetris_scores(id,room_id,mode,name,score,lines,level,outcome,opponent,finished_at,identity_id,device_info) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)');
   const saveScores = (room: RoomSnapshot, passwordHash: string | null, finishedAt: number) => {
     if (room.game !== 'tetris' || room.status !== 'finished' || passwordHash) return;
     const state = room.state as import('./shared/types.js').TetrisState;
@@ -32,7 +35,7 @@ export function createDatabase(file: string) {
       const value = state.players?.[player.id];
       if (!value || !Number.isSafeInteger(value.score) || value.score < 0 || !Number.isSafeInteger(value.lines) || value.lines < 0) continue;
       const outcome = state.mode === 'solo' ? null : state.draw ? 'draw' : state.winnerId === player.id ? 'win' : 'loss';
-      insertScore.run(JSON.stringify([room.id, room.stateVersion, player.id]), room.id, state.mode, player.name, value.score, value.lines, Math.floor(value.lines / 10) + 1, outcome, state.mode === 'versus' ? room.players.find(other => other.id !== player.id)?.name ?? null : null, finishedAt);
+      insertScore.run(JSON.stringify([room.id, room.stateVersion, player.id]), room.id, state.mode, player.name, value.score, value.lines, Math.floor(value.lines / 10) + 1, outcome, state.mode === 'versus' ? room.players.find(other => other.id !== player.id)?.name ?? null : null, finishedAt, player.identityId ?? null, player.deviceInfo ? JSON.stringify(player.deviceInfo) : null);
     }
   };
   db.transaction(() => {
@@ -68,14 +71,16 @@ export function createDatabase(file: string) {
       })();
     },
     getTetrisLeaderboard(mode: 'solo' | 'versus') {
-      return db.prepare(`SELECT t.id,t.room_id AS roomId,(SELECT submission_id FROM solo_submissions WHERE session_id=t.room_id LIMIT 1) AS submissionId,t.mode,t.name,t.score,t.lines,t.level,t.outcome,t.opponent,t.finished_at AS finishedAt
+      return db.prepare(`SELECT t.id,t.identity_id AS identityId,t.device_info AS deviceJson,t.room_id AS roomId,(SELECT submission_id FROM solo_submissions WHERE session_id=t.room_id LIMIT 1) AS submissionId,t.mode,t.name,t.score,t.lines,t.level,t.outcome,t.opponent,t.finished_at AS finishedAt
         FROM tetris_scores t JOIN sessions s ON s.id=t.room_id WHERE t.mode=? AND s.password_hash IS NULL
         ORDER BY t.score DESC,t.lines DESC,t.finished_at ASC,t.id ASC LIMIT 20`).all(mode).map(value => {
-        const row = value as Omit<TetrisLeaderboardEntry, 'playerId'> & { submissionId: string | null };
-        const { submissionId, ...entry } = row;
+        const row = value as Omit<TetrisLeaderboardEntry, 'playerId'> & { submissionId: string | null; deviceJson: string | null };
+        const { submissionId, deviceJson, ...entry } = row;
         let playerId = '';
         try { const parts: unknown = JSON.parse(entry.id); if (Array.isArray(parts) && typeof parts[2] === 'string') playerId = parts[2]; } catch { /* Legacy entries may not contain a player id. */ }
-        return { ...entry, playerId: submissionId ?? (playerId && playerId !== 'solo' ? playerId : 'legacy:' + entry.roomId) };
+        let deviceInfo: DeviceInfo | null = null;
+        try { const parsed = deviceInfoSchema.safeParse(JSON.parse(deviceJson ?? 'null')); if (parsed.success) deviceInfo = parsed.data; } catch { /* Unreadable metadata stays unknown. */ }
+        return { ...entry, deviceInfo, playerId: submissionId ?? (playerId && playerId !== 'solo' ? playerId : 'legacy:' + entry.roomId) };
       }) as TetrisLeaderboardEntry[];
     },
     getSession(id: string) { return db.prepare('SELECT * FROM sessions WHERE id=?').get(id) as StoredSession | undefined; },
