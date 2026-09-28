@@ -3,11 +3,13 @@ import { readFile } from 'node:fs/promises';
 import { ZodError } from 'zod';
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify'; import type { GameType } from './shared/types.js'; import { config, supportedGames } from './config.js'; import { RoomService } from './rooms.js'; import { page } from './ui/page.js';
+import { loadAdsense } from './ui/adsense.js';
 const parse = <T>(value: string | null, fallback: T): T => { try { return value ? JSON.parse(value) as T : fallback; } catch { return fallback; } };
 const access = (request: { headers: Record<string, unknown>; query: unknown }) => String((request.headers['x-room-access'] as string | undefined) ?? (request.query as { accessToken?: string }).accessToken ?? '');
 const reconnect = (request: { headers: Record<string, unknown> }) => String(request.headers['x-room-reconnect'] ?? '');
 const ownerDeleteToken = (request: { headers: Record<string, unknown> }) => String(request.headers['x-room-owner'] ?? '');
 export function registerHttp(app: FastifyInstance, rooms: RoomService) {
+  const adsense = loadAdsense();
   const adminTokens = new Map<string, number>();
   const admin = (request: { headers: Record<string, unknown> }) => { const token = request.headers['x-admin-token']; const expires = typeof token === 'string' ? adminTokens.get(token) : undefined; return Boolean(expires && expires > Date.now()); };
   app.get('/assets/tetris-solo.js', async (_request, reply) => reply.type('application/javascript').header('cache-control', 'no-cache').send(await readFile(new URL(import.meta.url.includes('/dist/') ? './browser/solo.js' : '../dist/browser/solo.js', import.meta.url))));
@@ -35,5 +37,5 @@ export function registerHttp(app: FastifyInstance, rooms: RoomService) {
   app.post('/api/templates', async (request, reply) => { const body = request.body as { game: GameType; config: Record<string, unknown>; share?: boolean }; if (!supportedGames.includes(body.game) || !body.config) return reply.code(400).send({ error: '模板設定不完整' }); const id = randomUUID(); const shareCode = body.share ? randomBytes(6).toString('base64url') : undefined; rooms.saveTemplate({ id, game: body.game, config: body.config, shareCode }); return reply.code(201).send({ id, game: body.game, config: body.config, shareCode }); });
   app.get('/api/templates/:id', async (request, reply) => { const row = rooms.getTemplate((request.params as { id: string }).id); if (!row) return reply.code(404).send({ error: '模板不存在' }); return { id: row.id, game: row.game, config: parse(row.config, {}), shareCode: row.share_code }; });
   app.delete('/api/templates/:id', async (request, reply) => { const id = (request.params as { id: string }).id; if (!rooms.deleteTemplate(id)) return reply.code(404).send({ error: '模板不存在' }); return reply.code(204).send(); });
-  app.get('/*', async (_request, reply) => reply.type('text/html').send(page()));
+  app.get('/*', async (request, reply) => reply.type('text/html').send(page(request.url.split('?')[0], adsense)));
 }

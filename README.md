@@ -41,8 +41,17 @@ cp .env.example .env
 | `BASE_PATH` | 空白 | 公開 URL 前綴，例如 `/playroom`；需搭配反向代理移除該前綴。 |
 | `DATABASE_FILE` | `playroom.sqlite` | SQLite 資料庫檔案位置。 |
 | `ADMIN_PASSWORD` | 未設定 | 啟用 `/admin` 管理登入的密碼。 |
+| `ADSENSE_ENABLED` | 未設定 | 設為 `1` 且 `NODE_ENV=production` 時啟用 AdSense。 |
+| `ADSENSE_HEAD_FILE` | 未設定 | 頁首 AdSense 載入碼的私人檔案絕對路徑。 |
+| `ADSENSE_UNIT_FILE` | 未設定 | 廣告單元與初始化程式碼的私人檔案絕對路徑。 |
 
 資料庫會保存房間設定、事件、結果、聊天室訊息與範本。玩家端會在瀏覽器保存近期房間、重連資訊與自己儲存的範本 ID。
+
+### AdSense
+
+正式主機可在 `/home/ubuntu/Workspace/playroom/private/adsense/` 建立 `head.html` 與 `unit.html`。前者放 AdSense 提供的頁首 `<script>`，後者放廣告單元的 `<ins>` 及其初始化 `<script>`。這些檔案位於部署替換的 `dist` 之外，且 `private/adsense/` 已加入 `.gitignore`。在主機的 `.env` 設定 `NODE_ENV=production`、`ADSENSE_ENABLED=1`，並讓兩個 `ADSENSE_*_FILE` 指向上述檔案的絕對路徑，重啟 PM2 後生效。啟用時若檔案缺失或為空，服務會在啟動時報錯。
+
+廣告只會出現在首頁與四個遊戲大廳的內容下方。停用時將 `ADSENSE_ENABLED` 設為 `0` 並重啟服務。
 
 ## GitHub Actions 自動部署
 

@@ -11,6 +11,7 @@ playroom.sqlite-wal
 .env
 .env.local
 .env.*.local
+private/adsense/
 
 # Logs, test coverage, and OS metadata
 *.log
