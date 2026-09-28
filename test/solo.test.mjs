@@ -9,16 +9,16 @@ import { registerHttp } from '../dist/http.js';
 const create = () => SoloSession.create('測試玩家', '', randomUUID(), 'ab'.repeat(32));
 const body = s => { const { version, uploadedId, ...data } = s.save; return data; };
 
-test('本地落地立即鎖定，暫停凍結重力', () => {
+test('本地落地保留 300 毫秒鎖定緩衝，暫停凍結剩餘時間', () => {
   const s = create(); s.paused = false;
   const p = s.save.state.players.solo;
   p.active = { type: 'O', rotation: 0, x: 3, y: 18 };
   s.apply({ type: 'tetris.move', direction: 'down' });
-  assert.equal(p.lockAt, undefined);
-  assert.equal(p.board[19][4], 'O');
-  const locked = JSON.stringify(p.board);
+  assert.equal(p.lockAt, 300);
+  assert.equal(p.board[19][4], null);
   s.apply({ type: 'tetris.move', direction: 'right' });
-  assert.equal(JSON.stringify(p.board), locked);
+  assert.equal(p.active.x, 4);
+  assert.equal(p.lockAt, 300);
   s.advance(200); s.paused = true;
   const before = JSON.stringify(s.save);
   assert.equal(s.apply({ type: 'tetris.hardDrop' }), false);
@@ -26,8 +26,10 @@ test('本地落地立即鎖定，暫停凍結重力', () => {
   assert.equal(JSON.stringify(s.save), before);
   const restored = new SoloSession(soloSaveSchema.parse(JSON.parse(before)));
   assert.equal(restored.paused, true);
-  restored.paused = false; restored.advance(299);
-  assert.equal(restored.save.state.players.solo.board[19][4], 'O');
+  restored.paused = false; restored.advance(99);
+  assert.equal(restored.save.state.players.solo.board[19][5], null);
+  restored.advance(1);
+  assert.equal(restored.save.state.players.solo.board[19][5], 'O');
 });
 
 test('本地單人沿用消行計分且結束後拒絕操作', () => {
@@ -41,7 +43,7 @@ test('本地單人沿用消行計分且結束後拒絕操作', () => {
   const active = structuredClone(p.active);
   s.apply({type:'tetris.move',direction:'left'});
   assert.deepEqual(p.active,active);
-  s.advance(149);
+  s.advance(199);
   assert.equal(p.score,0);
   s.advance(1);
   assert.equal(p.score,300); assert.equal(p.lines,2);
@@ -50,13 +52,16 @@ test('本地單人沿用消行計分且結束後拒絕操作', () => {
   assert.equal(s.apply({type:'tetris.rotate'}),false);
 });
 
-test('自然下落抵達堆疊立即鎖定，消行暫停與續玩保留剩餘動畫時間', () => {
+test('自然下落鎖定後消行，暫停與續玩保留剩餘動畫時間', () => {
   const s = create(); s.paused = false;
   const p = s.save.state.players.solo;
-  p.active = { type: 'O', rotation: 0, x: -1, y: 17 };
+  p.active = { type: 'O', rotation: 0, x: -1, y: 18 };
   for (let x = 2; x < 10; x++) p.board[19][x] = 'I';
   s.save.state.nextFallAt = 1000;
   s.advance(1000);
+  assert.equal(p.lockAt, 1300);
+  assert.equal(p.board[19][0], null);
+  s.advance(300);
   assert.equal(p.board[19][0], 'O');
   assert.deepEqual(p.clearing?.rows, [19]);
   s.advance(60); s.paused = true;
@@ -64,7 +69,7 @@ test('自然下落抵達堆疊立即鎖定，消行暫停與續玩保留剩餘�
   restored.advance(1000);
   assert.deepEqual(restored.save.state.players.solo.clearing?.rows, [19]);
   restored.paused = false;
-  restored.advance(89);
+  restored.advance(139);
   assert.equal(restored.save.state.players.solo.lines, 0);
   restored.advance(1);
   assert.equal(restored.save.state.players.solo.lines, 1);

@@ -54,3 +54,22 @@ test('八個對戰按鈕對應 1～4 攻擊與 QWER 自清',()=>{
   assert.equal(JSON.stringify(w.sent),JSON.stringify([{type:'tetris.selfClear',lines:1}]));
   } finally { w.close(); }
 });
+
+test('自動與不攻擊對戰顯示集氣但只保留自清操作',()=>{
+  const dom=new JSDOM('<div id="app"></div>',{url:'http://localhost/',runScripts:'outside-only'}),w=dom.window;
+  const players=[{id:'host',name:'甲',connected:true},{id:'guest',name:'乙',connected:true}];
+  w.fixture={id:'test',game:'tetris',status:'playing',hostId:'host',config:{attackEnabled:true,attackMode:'auto'},players,state:tetrisGame.createState(players,{attackMode:'auto'})};w.sent=[];
+  w.fixture.state.players.host.attackPoints=12;
+  w.eval(clientScript+'\nopenChat=()=>{};room=window.fixture;me="host";socket={readyState:WebSocket.OPEN,send:message=>window.sent.push(JSON.parse(message))};window.paint=()=>renderRoom();renderRoom();');
+  try {
+    assert.equal(w.document.querySelectorAll('[data-action="tetris-attack"]').length,0);
+    assert.equal(w.document.querySelectorAll('[data-action="tetris-self-clear"]').length,4);
+    assert.match(w.document.querySelector('.tetris-charge').getAttribute('aria-label'),/12 \/ 16/);
+    w.document.body.dispatchEvent(new w.KeyboardEvent('keydown',{key:'1',bubbles:true}));
+    assert.equal(w.sent.length,0);
+    w.fixture.config.attackEnabled=false;w.fixture.state.attackEnabled=false;w.paint();
+    assert.equal(w.document.querySelectorAll('[data-action="tetris-attack"]').length,0);
+    assert.match(w.document.querySelector('.tetris-rule').textContent,/不攻擊/);
+    assert.match(w.document.querySelector('.tetris-charge').getAttribute('aria-label'),/4 \/ 4/);
+  } finally {w.close()}
+});

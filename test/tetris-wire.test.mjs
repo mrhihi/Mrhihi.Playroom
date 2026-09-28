@@ -37,21 +37,46 @@ test('自清預約與動畫階段會送進對戰差異更新', () => {
   const reserved = visibleTetris(state), patch = diffTetris(before, reserved, ['host']);
   assert.equal(patch.players.host.selfClearRows, 2);
   delete state.players.host.selfClearRows;
-  state.players.host.clearing = { rows: [19], endsAt: Date.now() + 150, kind: 'self' };
+  state.players.host.clearing = { rows: [19], endsAt: Date.now() + 200, kind: 'self' };
   const clearing = diffTetris(reserved, visibleTetris(state), ['host']);
   assert.equal(clearing.players.host.selfClearRows, null);
   assert.equal(clearing.players.host.clearing.kind, 'self');
 });
 
 const painted = board => [...board.children].flatMap((cell, index) => /piece-[I-TZ]/.test(cell.className) ? [index] : []);
-function viewer(id, state) {
+function viewer(id, state, config = {}) {
   const dom = new JSDOM('<div id="app"></div>', { url: 'http://localhost/', runScripts: 'outside-only' });
   const w = dom.window;
   w.eval(clientScript + '\nopenChat=()=>{};class MockSocket{static OPEN=1;readyState=1;send(){}close(){}};window.WebSocket=MockSocket;connectRoom("test");window.deliver=message=>socket.onmessage({data:JSON.stringify(message)})');
   w.deliver({ type: 'joined', playerId: id, reconnectToken: 'token' });
-  w.deliver({ type: 'snapshot', payload: { id: 'test', game: 'tetris', status: 'playing', hostId: 'host', config: { mode: 'versus' }, players, spectators: id === 'viewer' ? [{ id, name: '觀眾', connected: true }] : [], state: visibleTetris(state) } });
+  w.deliver({ type: 'snapshot', payload: { id: 'test', game: 'tetris', status: 'playing', hostId: 'host', config: { mode: 'versus', ...config }, players, spectators: id === 'viewer' ? [{ id, name: '觀眾', connected: true }] : [], state: visibleTetris(state) } });
   return w;
 }
+
+test('雙方集氣依玩家分開更新，滿格門檻符合攻擊模式', () => {
+  for (const [config, goal] of [[{}, 4], [{ attackEnabled: false }, 4], [{ attackMode: 'auto' }, 16]]) {
+    for (const id of ['host', 'guest', 'viewer']) {
+      const state = tetrisGame.createState(players, config);
+      state.players.host.attackPoints = goal - 1;
+      state.players.guest.attackPoints = 1;
+      const w = viewer(id, state, config);
+      const charge = playerId => w.document.querySelector('.tetris-charge[data-player-id="' + playerId + '"]');
+      assert.equal(charge('host').querySelector('strong').textContent, (goal - 1) + ' / ' + goal + ' 點');
+      assert.equal(charge('guest').querySelector('strong').textContent, '1 / ' + goal + ' 點');
+      const before = visibleTetris(state), after = structuredClone(state);
+      after.players.host.attackPoints = goal;
+      w.deliver({ type: 'tetris.patch', sequence: 1, patch: diffTetris(before, visibleTetris(after), ['host']) });
+      assert.equal(charge('host').querySelector('i').style.width, '100%');
+      assert.equal(charge('guest').querySelector('strong').textContent, '1 / ' + goal + ' 點');
+      const next = structuredClone(after);
+      next.players.guest.attackPoints = 0;
+      w.deliver({ type: 'tetris.patch', sequence: 2, patch: diffTetris(visibleTetris(after), visibleTetris(next), ['guest']) });
+      assert.equal(charge('host').querySelector('strong').textContent, goal + ' / ' + goal + ' 點');
+      assert.equal(charge('guest').querySelector('i').style.width, '0%');
+      w.close();
+    }
+  }
+});
 
 test('雙方自己的更新只移動自己的大棋盤與預覽，對手更新只移動小棋盤', () => {
   for (const id of ['host', 'guest']) {
@@ -106,7 +131,7 @@ test('自己、對手與觀眾都能看到消行動畫階段', () => {
       : w.document.querySelector('.tetris-players>.tetris-player .tetris-board');
     const before = visibleTetris(state), clearing = structuredClone(state);
     clearing.players.host.board[19].fill('I');
-    clearing.players.host.clearing = { rows: [19], endsAt: Date.now() + 150 };
+    clearing.players.host.clearing = { rows: [19], endsAt: Date.now() + 200 };
     w.deliver({ type: 'tetris.patch', sequence: 1, patch: diffTetris(before, visibleTetris(clearing), ['host']) });
     assert.equal(board.querySelectorAll('.tetris-cell.clearing').length, 10);
     const cleared = structuredClone(clearing);
@@ -156,7 +181,7 @@ test('攻擊按鈕每排需要四點並顯示成本', () => {
   w.close();
 });
 
-test('對戰斷線暫停會延後消行完成時間', () => {
+test('對戰斷線暫停會延後消行完成與鎖定時間', () => {
   const rooms = new RoomService(createDatabase(':memory:'));
   const { room } = rooms.create('tetris', '甲', {});
   rooms.addPlayer(room, '乙');
@@ -164,13 +189,17 @@ test('對戰斷線暫停會延後消行完成時間', () => {
   rooms.start(room);
   const state = room.state, first = state.players[room.players[0].id];
   first.clearing = { rows: [19], endsAt: 1150 };
+  const second = state.players[room.players[1].id];
+  second.lockAt = 1500;
   room.players[1].connected = false;
   rooms.tick(room, 1000);
   room.players[1].connected = true;
   rooms.tick(room, 2000);
   assert.equal(first.clearing.endsAt, 2150);
+  assert.equal(second.lockAt, 2500);
   rooms.tick(room, 2149);
   assert.ok(first.clearing);
+  assert.equal(second.board[19].some(Boolean), false);
 });
 
 test('自己即時收到差異，對手 250 毫秒內收到合併結果', async () => {

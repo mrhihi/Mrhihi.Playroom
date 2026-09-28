@@ -98,6 +98,8 @@ export interface TetrisPlayerState {
 }
 export interface TetrisState {
   mode: 'solo' | 'versus';
+  attackEnabled?: boolean;
+  attackMode?: 'manual' | 'auto';
   players: Record<string, TetrisPlayerState>;
   nextFallAt: number;
   pausedAt?: number;

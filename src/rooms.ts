@@ -46,7 +46,7 @@ export class RoomService {
       players: observerHost ? [] : [host],
       spectators: observerHost ? [host] : [],
       memberRoles: new Map([[hostId, observerHost ? 'spectator' : 'player']]),
-      config: game === 'tetris' ? { ...config, mode: config.mode === 'solo' ? 'solo' : 'versus', allowSpectators: config.allowSpectators !== false } : config,
+      config: game === 'tetris' ? { ...config, mode: config.mode === 'solo' ? 'solo' : 'versus', allowSpectators: config.allowSpectators !== false, attackEnabled: config.attackEnabled !== false, attackMode: config.attackMode === 'auto' ? 'auto' : 'manual' } : config,
       state: {},
       messages: [],
       stateVersion: 0,
@@ -229,13 +229,13 @@ export class RoomService {
     if (room.status !== 'playing') return false;
     if (room.game === 'tetris') {
       const disconnected = room.players.find(player => !player.connected);
-      const state = room.state as { pausedAt?: number; pausedPlayerId?: string; nextFallAt: number; winnerId?: string; players: Record<string, { clearing?: { endsAt: number } }> };
+      const state = room.state as { pausedAt?: number; pausedPlayerId?: string; nextFallAt: number; winnerId?: string; players: Record<string, { clearing?: { endsAt: number }; lockAt?: number }> };
       if (disconnected) {
         if (!state.pausedAt) { state.pausedAt = now; state.pausedPlayerId = disconnected.id; room.stateVersion++; return true; }
         if (now - state.pausedAt >= 30_000) { state.winnerId = room.players.find(player => player.id !== disconnected.id)?.id; this.finish(room); return true; }
         return false;
       }
-      if (state.pausedAt) { const elapsed = now - state.pausedAt; state.nextFallAt += elapsed; for (const player of Object.values(state.players)) if (player.clearing) player.clearing.endsAt += elapsed; delete state.pausedAt; delete state.pausedPlayerId; room.stateVersion++; return true; }
+      if (state.pausedAt) { const elapsed = now - state.pausedAt; state.nextFallAt += elapsed; for (const player of Object.values(state.players)) { if (player.clearing) player.clearing.endsAt += elapsed; if (player.lockAt !== undefined) player.lockAt += elapsed; } delete state.pausedAt; delete state.pausedPlayerId; room.stateVersion++; return true; }
     }
     const result = getGame(room.game).tick?.(room.state, { hostId: room.hostId, players: room.players, now });
     if (!result) return false;
@@ -273,14 +273,15 @@ export class RoomService {
   }
   tetrisLeaderboard(mode: 'solo' | 'versus') { return this.db.getTetrisLeaderboard(mode); }
   openTetrisRooms() {
-    const versus: { id: string; players: string[]; hasPassword: boolean }[] = [];
-    const spectate: { id: string; players: string[]; spectatorCount: number; hasPassword: boolean }[] = [];
+    const versus: { id: string; players: string[]; hasPassword: boolean; attackEnabled: boolean; attackMode: 'manual' | 'auto' }[] = [];
+    const spectate: { id: string; players: string[]; spectatorCount: number; hasPassword: boolean; attackEnabled: boolean; attackMode: 'manual' | 'auto' }[] = [];
     for (const room of this.rooms.values()) {
       if (room.game !== 'tetris' || room.config.mode !== 'versus') continue;
+      const attack = { attackEnabled: room.config.attackEnabled !== false, attackMode: room.config.attackMode === 'auto' ? 'auto' as const : 'manual' as const };
       if (room.status === 'lobby' && room.players.length === 1 && room.players.some(player => player.id === room.hostId && player.connected)) {
-        versus.push({ id: room.id, players: room.players.map(player => player.name), hasPassword: Boolean(room.passwordHash) });
+        versus.push({ id: room.id, players: room.players.map(player => player.name), hasPassword: Boolean(room.passwordHash), ...attack });
       } else if (room.status === 'playing' && room.config.allowSpectators !== false) {
-        spectate.push({ id: room.id, players: room.players.map(player => player.name), spectatorCount: room.spectators.filter(player => player.connected).length, hasPassword: Boolean(room.passwordHash) });
+        spectate.push({ id: room.id, players: room.players.map(player => player.name), spectatorCount: room.spectators.filter(player => player.connected).length, hasPassword: Boolean(room.passwordHash), ...attack });
       }
     }
     return { versus, spectate };

@@ -18,21 +18,22 @@ test('房間清單隨房況更新，標示密碼並排除單人、離線與關�
     return response.json();
   };
   const open = rooms.create('tetris', '公開局主', {}).room;
-  const hidden = rooms.create('tetris', '秘密局主', {}, 'secret').room;
+  const hidden = rooms.create('tetris', '秘密局主', { attackMode: 'auto' }, 'secret').room;
   const solo = rooms.create('tetris', '單人局主', { mode: 'solo' }).room;
   const offline = rooms.create('tetris', '離線局主', {}).room;
-  const closed = rooms.create('tetris', '不開放觀戰', { allowSpectators: false }).room;
+  const closed = rooms.create('tetris', '不開放觀戰', { allowSpectators: false, attackEnabled: false }).room;
   for (const room of [open, hidden, solo, closed]) room.players[0].connected = true;
   assert.deepEqual((await list()).versus.map(row => [row.id, row.hasPassword]), [[open.id, false], [hidden.id, true], [closed.id, false]]);
+  assert.deepEqual((await list()).versus.map(row => [row.attackEnabled, row.attackMode]), [[true, 'manual'], [true, 'auto'], [false, 'manual']]);
   assert.deepEqual((await list()).spectate, []);
   rooms.addPlayer(open, '公開對手');
   assert.equal((await list()).versus.some(row => row.id === open.id), false);
   rooms.start(open);
   rooms.addPlayer(open, '觀眾');
-  assert.deepEqual((await list()).spectate, [{ id: open.id, players: ['公開局主', '公開對手'], spectatorCount: 1, hasPassword: false }]);
+  assert.deepEqual((await list()).spectate, [{ id: open.id, players: ['公開局主', '公開對手'], spectatorCount: 1, hasPassword: false, attackEnabled: true, attackMode: 'manual' }]);
   rooms.addPlayer(hidden, '秘密對手');
   rooms.start(hidden);
-  assert.deepEqual((await list()).spectate.map(row => [row.id, row.hasPassword]), [[open.id, false], [hidden.id, true]]);
+  assert.deepEqual((await list()).spectate.map(row => [row.id, row.hasPassword, row.attackMode]), [[open.id, false, 'manual'], [hidden.id, true, 'auto']]);
   rooms.addPlayer(closed, '對手');
   rooms.start(closed);
   assert.equal((await list()).spectate.some(row => row.id === closed.id), false);
@@ -50,7 +51,7 @@ test('房間清單隨房況更新，標示密碼並排除單人、離線與關�
 test('大廳分開顯示對戰與觀戰，重新整理可更新內容', async () => {
   const dom = new JSDOM('<main id="app"></main>', { url: 'http://localhost/games/tetris', runScripts: 'outside-only', pretendToBeVisual: true });
   const w = dom.window;
-  let openRooms = { versus: [{ id: 'room123', players: ['甲'], hasPassword: false }, { id: 'locked123', players: ['丁'], hasPassword: true }], spectate: [{ id: 'room456', players: ['乙', '丙'], spectatorCount: 2, hasPassword: true }] };
+  let openRooms = { versus: [{ id: 'room123', players: ['甲'], hasPassword: false, attackEnabled: false }, { id: 'locked123', players: ['丁'], hasPassword: true, attackMode: 'auto' }], spectate: [{ id: 'room456', players: ['乙', '丙'], spectatorCount: 2, hasPassword: true }] };
   let fail = false;
   w.fetch = async url => {
     if (fail && String(url).includes('/api/tetris/open-rooms')) throw Error('offline');
@@ -67,6 +68,9 @@ test('大廳分開顯示對戰與觀戰，重新整理可更新內容', async ()
   assert.doesNotMatch(w.document.querySelector('[data-open-versus] a').textContent, /🔒|需要密碼/);
   assert.match(w.document.querySelector('[data-open-versus] a[href="/rooms/locked123"]').textContent, /🔒 需要密碼/);
   assert.match(w.document.querySelector('[data-open-spectate] a').textContent, /🔒 需要密碼/);
+  assert.match(w.document.querySelector('[data-open-versus] a').textContent, /不攻擊/);
+  assert.match(w.document.querySelector('[data-open-versus] a[href="/rooms/locked123"]').textContent, /自動攻擊/);
+  assert.match(w.document.querySelector('[data-open-spectate] a').textContent, /手動攻擊/);
   openRooms = { versus: [], spectate: [] };
   w.document.querySelector('[data-open-rooms-refresh]').click();
   await settle();
