@@ -30,6 +30,7 @@ export type ClientMessage =
   | { type: 'tetris.hardDrop' }
   | { type: 'tetris.surrender' }
   | { type: 'tetris.attack'; lines: number }
+  | { type: 'tetris.selfClear'; lines: number }
   | { type: 'chat.send'; text: string };
 
 export interface RaceState {
@@ -77,7 +78,7 @@ export interface PollState {
 
 export type TetrisCell = string | null;
 export interface TetrisPiece { type: string; rotation: number; x: number; y: number; }
-export interface TetrisPendingGarbage { lines: number; dueAt: number; fromPlayerId: string; }
+export interface TetrisPendingGarbage { lines: number; fromPlayerId: string; }
 export interface TetrisPlayerState {
   board: TetrisCell[][];
   active: TetrisPiece;
@@ -88,8 +89,10 @@ export interface TetrisPlayerState {
   score: number;
   attackPoints: number;
   attackQueue: number[];
+  selfClearRows?: number;
   incoming: TetrisPendingGarbage[];
   swapUsed?: boolean;
+  clearing?: { rows: number[]; endsAt: number; kind?: 'self' };
   lockAt?: number;
   lost?: boolean;
 }

@@ -2,16 +2,66 @@ import { WebSocketServer, WebSocket } from 'ws';
 import type { IncomingMessage } from 'node:http';
 import type { ClientMessage } from './shared/types.js';
 import { RoomService } from './rooms.js';
+import type { TetrisState } from './shared/types.js';
+import { diffTetris, visibleTetris, type VisibleTetris } from './tetris-wire.js';
 
 const send = (ws: WebSocket, value: unknown) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(value)); };
 
 export function createRealtime(rooms: RoomService) {
   const wss = new WebSocketServer({ noServer: true });
   const lastPong = new WeakMap<WebSocket, number>();
-  const broadcast = (room: import('./rooms.js').Room) => { for (const [id, client] of room.clients) send(client, { type: 'snapshot', payload: rooms.snapshot(room, id) }); };
+  const tetrisSync = new WeakMap<WebSocket, { sent: VisibleTetris; sequence: number; timer?: NodeJS.Timeout }>();
+  const full = (room: import('./rooms.js').Room, id: string, client: WebSocket) => {
+    const previous = tetrisSync.get(client);
+    if (previous?.timer) clearTimeout(previous.timer);
+    const snapshot = rooms.snapshot(room, id);
+    if (room.game === 'tetris' && (room.state as TetrisState).players) {
+      const state = visibleTetris(room.state as TetrisState);
+      snapshot.state = state;
+      tetrisSync.set(client, { sent: state, sequence: 0 });
+    } else tetrisSync.delete(client);
+    send(client, { type: 'snapshot', payload: snapshot });
+  };
+  const broadcast = (room: import('./rooms.js').Room) => {
+    if (room.game !== 'tetris' || room.status !== 'playing') {
+      for (const [id, client] of room.clients) full(room, id, client);
+      return;
+    }
+    const current = visibleTetris(room.state as TetrisState);
+    for (const [id, client] of room.clients) {
+      const sync = tetrisSync.get(client);
+      if (!sync) { full(room, id, client); continue; }
+      const isPlayer = Boolean(current.players[id]);
+      const opponentIds = Object.keys(current.players).filter(playerId => playerId !== id);
+      const clearingIds = Object.keys(current.players).filter(playerId =>
+        JSON.stringify(sync.sent.players[playerId]?.clearing) !== JSON.stringify(current.players[playerId]?.clearing));
+      const immediateIds = isPlayer ? [id, ...clearingIds.filter(playerId => playerId !== id)] : clearingIds;
+      const immediate = diffTetris(sync.sent, current, immediateIds, true);
+      if (immediate) {
+        send(client, { type: 'tetris.patch', sequence: ++sync.sequence, patch: immediate });
+        for (const playerId of immediateIds) sync.sent.players[playerId] = current.players[playerId];
+        for (const key of ['pausedAt', 'pausedPlayerId', 'winnerId', 'draw', 'gameOver'] as const) {
+          if (current[key] === undefined) delete sync.sent[key];
+          else (sync.sent as unknown as Record<string, unknown>)[key] = current[key];
+        }
+      }
+      if (!diffTetris(sync.sent, current, isPlayer ? opponentIds : Object.keys(current.players))) continue;
+      if (!sync.timer) sync.timer = setTimeout(() => {
+        sync.timer = undefined;
+        if (client.readyState !== WebSocket.OPEN || room.status !== 'playing') return;
+        if (client.bufferedAmount > 64 * 1024) { sync.timer = setTimeout(() => { sync.timer = undefined; broadcast(room); }, 250); return; }
+        const latest = visibleTetris(room.state as TetrisState);
+        const ids = isPlayer ? opponentIds : Object.keys(latest.players);
+        const patch = diffTetris(sync.sent, latest, ids);
+        if (!patch) return;
+        send(client, { type: 'tetris.patch', sequence: ++sync.sequence, patch });
+        for (const playerId of ids) sync.sent.players[playerId] = latest.players[playerId];
+      }, 250);
+    }
+  };
   const heartbeat = setInterval(() => { const now = Date.now(); for (const client of wss.clients) { if (now - (lastPong.get(client) ?? 0) > 45_000) client.terminate(); else client.ping(); } }, 15_000);
   const gameClock = setInterval(() => { for (const room of rooms.rooms.values()) if (rooms.tick(room)) broadcast(room); }, 50);
-  wss.on('close', () => { clearInterval(heartbeat); clearInterval(gameClock); });
+  wss.on('close', () => { clearInterval(heartbeat); clearInterval(gameClock); for (const client of wss.clients) { const timer = tetrisSync.get(client)?.timer; if (timer) clearTimeout(timer); } });
   rooms.onFinish(broadcast);
   wss.on('connection', (ws, request) => {
     const id = new URL(request.url ?? '/', 'http://localhost').pathname.split('/').pop() ?? '';
@@ -21,7 +71,7 @@ export function createRealtime(rooms: RoomService) {
     ws.on('pong', () => lastPong.set(ws, Date.now()));
     ws.on('message', raw => {
       let message: ClientMessage; try { message = JSON.parse(raw.toString()); } catch { return send(ws, { type: 'error', message: '無效訊息' }); }
-      if (message.type === 'join') { try { const joined = rooms.addPlayer(room, message.name, message.reconnectToken, message.observer, { identityId: message.identityId, deviceInfo: message.deviceInfo }); playerId = joined.id; const previous = room.clients.get(playerId); room.clients.set(playerId, ws); if (previous && previous !== ws) previous.close(4001, '連線已由新連線取代'); const member = [...room.players, ...room.spectators].find(player => player.id === playerId); if (joined.reconnected) rooms.addSystemMessage(room, (member?.name ?? '玩家') + ' 已回到房間'); send(ws, { type: 'joined', playerId, reconnectToken: joined.reconnectToken, reconnected: joined.reconnected, role: joined.role }); broadcast(room); } catch (error) { send(ws, { type: 'error', message: error instanceof Error ? error.message : '無法加入房間' }); } return; }
+      if (message.type === 'join') { try { const joined = rooms.addPlayer(room, message.name, message.reconnectToken, message.observer, { identityId: message.identityId, deviceInfo: message.deviceInfo }); playerId = joined.id; const previous = room.clients.get(playerId); room.clients.set(playerId, ws); if (previous && previous !== ws) previous.close(4001, '連線已由新連線取代'); const member = [...room.players, ...room.spectators].find(player => player.id === playerId); if (joined.reconnected) rooms.addSystemMessage(room, (member?.name ?? '玩家') + ' 已回到房間'); send(ws, { type: 'joined', playerId, reconnectToken: joined.reconnectToken, reconnected: joined.reconnected, role: joined.role }); for (const [memberId, client] of room.clients) full(room, memberId, client); } catch (error) { send(ws, { type: 'error', message: error instanceof Error ? error.message : '無法加入房間' }); } return; }
       if (!playerId) return send(ws, { type: 'error', message: '請先加入房間' });
       const player = [...room.players, ...room.spectators].find(candidate => candidate.id === playerId); if (!player) return;
       try {
@@ -30,12 +80,14 @@ export function createRealtime(rooms: RoomService) {
         else if (message.type === 'host.start' && playerId === room.hostId) rooms.start(room, message.config);
         else if (room.status === 'playing') rooms.apply(room, playerId, message);
         else throw new Error('遊戲尚未開始或已結束');
-        broadcast(room);
+        if (room.game === 'tetris' && (message.type === 'player.rename' || message.type === 'chat.send' || message.type === 'host.start')) {
+          for (const [memberId, client] of room.clients) full(room, memberId, client);
+        } else broadcast(room);
       } catch (error) { send(ws, { type: 'error', message: error instanceof Error ? error.message : '操作失敗' }); }
     });
-    ws.on('close', () => { if (!playerId || room.clients.get(playerId) !== ws || !rooms.rooms.has(room.id)) return; const player = [...room.players, ...room.spectators].find(candidate => candidate.id === playerId); room.clients.delete(playerId); if (player?.connected) { player.connected = false; rooms.addSystemMessage(room, player.name + ' 已離開房間'); } broadcast(room); });
+    ws.on('close', () => { const timer = tetrisSync.get(ws)?.timer; if (timer) clearTimeout(timer); if (!playerId || room.clients.get(playerId) !== ws || !rooms.rooms.has(room.id)) return; const player = [...room.players, ...room.spectators].find(candidate => candidate.id === playerId); room.clients.delete(playerId); if (player?.connected) { player.connected = false; rooms.addSystemMessage(room, player.name + ' 已離開房間'); } for (const [memberId, client] of room.clients) full(room, memberId, client); });
   });
-  return { upgrade(request: IncomingMessage, socket: import('node:stream').Duplex, head: Buffer) { if (request.url?.startsWith('/ws/')) wss.handleUpgrade(request, socket, head, ws => wss.emit('connection', ws, request)); else socket.destroy(); } };
+  return { upgrade(request: IncomingMessage, socket: import('node:stream').Duplex, head: Buffer) { if (request.url?.startsWith('/ws/')) wss.handleUpgrade(request, socket, head, ws => wss.emit('connection', ws, request)); else socket.destroy(); }, close() { clearInterval(heartbeat); clearInterval(gameClock); for (const client of wss.clients) client.terminate(); wss.close(); } };
 }
 
 export function createChatRealtime(rooms: RoomService) {

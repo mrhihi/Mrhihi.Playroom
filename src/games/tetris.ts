@@ -1,7 +1,7 @@
 import type { TetrisPiece, TetrisPlayerState, TetrisState } from '../shared/types.js';
 import type { GameModule } from './contract.js';
 
-const W = 10, H = 20, TYPES = ['I', 'J', 'L', 'O', 'S', 'T', 'Z'];
+const W = 10, H = 20, ATTACK_COST_PER_LINE = 4, TYPES = ['I', 'J', 'L', 'O', 'S', 'T', 'Z'];
 const SHAPES: Record<string, number[][][]> = {
   I: [[[0,1],[1,1],[2,1],[3,1]], [[2,0],[2,1],[2,2],[2,3]], [[0,2],[1,2],[2,2],[3,2]], [[1,0],[1,1],[1,2],[1,3]]],
   O: [[[1,0],[2,0],[1,1],[2,1]]],
@@ -25,14 +25,59 @@ const cells = (piece: TetrisPiece) => SHAPES[piece.type][piece.rotation % SHAPES
 const valid = (player: TetrisPlayerState, piece: TetrisPiece) => cells(piece).every(([x, y]) => x >= 0 && x < W && y < H && (y < 0 || !player.board[y][x]));
 const interval = (state: TetrisState) => { const level = Math.max(...Object.values(state.players).map(p => Math.floor(p.lines / 10) + 1)); return Math.max(50, 1000 * (0.8 - .007 * (level - 1)) ** (level - 1)); };
 const refill = (player: TetrisPlayerState) => { while (player.next.length < 4) { if (!player.bag.length) player.bag = shuffle(TYPES, () => pieceRandom(player)); player.next.push(player.bag.pop()!); } };
-const spawn = (player: TetrisPlayerState) => { player.swapUsed = false; player.lockAt = undefined; refill(player); player.active = { type: player.next.shift()!, rotation: 0, x: 3, y: -1 }; refill(player); if (!valid(player, player.active)) player.lost = true; };
-const queueAttack = (state: TetrisState, id: string, lines: number, now: number) => {
+const spawn = (player: TetrisPlayerState) => { player.swapUsed = false; delete player.lockAt; delete player.selfClearRows; refill(player); player.active = { type: player.next.shift()!, rotation: 0, x: 3, y: -1 }; refill(player); if (!valid(player, player.active)) player.lost = true; };
+const queueAttack = (state: TetrisState, id: string, lines: number) => {
   const player = state.players[id]; let left = lines;
-  for (const incoming of player.incoming.sort((a, b) => a.dueAt - b.dueAt)) { const used = Math.min(left, incoming.lines); incoming.lines -= used; left -= used; if (!left) break; }
+  for (const incoming of player.incoming) { const used = Math.min(left, incoming.lines); incoming.lines -= used; left -= used; if (!left) break; }
   player.incoming = player.incoming.filter(item => item.lines > 0);
-  if (left) { const opponent = Object.keys(state.players).find(other => other !== id)!; state.players[opponent].incoming.push({ lines: left, dueAt: now + 1500, fromPlayerId: id }); }
+  if (left) { const opponent = Object.keys(state.players).find(other => other !== id)!; state.players[opponent].incoming.push({ lines: left, fromPlayerId: id }); }
 };
-const releaseAttack = (state: TetrisState, id: string, now: number) => { if (state.mode !== 'versus') return; const player = state.players[id]; const lines = player.attackQueue.shift(); if (lines) queueAttack(state, id, lines, now); };
+const releaseAttack = (state: TetrisState, id: string) => { if (state.mode !== 'versus') return; const player = state.players[id]; const lines = player.attackQueue.shift(); if (lines) queueAttack(state, id, lines); };
+const addGarbage = (player: TetrisPlayerState, lines: number) => {
+  for (let i = 0; i < lines; i++) {
+    if (player.board[0].some(Boolean)) player.lost = true;
+    const gap = Math.floor(Math.random() * W);
+    player.board.shift();
+    player.board.push(Array.from({ length: W }, (_, x) => x === gap ? null : 'G'));
+  }
+};
+const collapseRows = (player: TetrisPlayerState, selected: number[]) => {
+  const rows = new Set(selected);
+  player.board = player.board.filter((_, index) => !rows.has(index));
+  while (player.board.length < H) player.board.unshift(Array<string | null>(W).fill(null));
+};
+const settlePiece = (state: TetrisState, id: string) => {
+  const player = state.players[id];
+  if (state.mode === 'versus' && player.incoming.length) {
+    const lines = player.incoming.reduce((sum, item) => sum + item.lines, 0);
+    player.incoming = [];
+    addGarbage(player, lines);
+  }
+  if (!player.lost) spawn(player);
+  resolveLoss(state);
+};
+const finishNaturalClear = (state: TetrisState, id: string, cleared: number, now: number) => {
+  const player = state.players[id];
+  const level = Math.floor(player.lines / 10) + 1;
+  player.lines += cleared;
+  if (state.mode === 'solo') player.score += ([0, 100, 300, 500, 800][cleared] ?? 0) * level;
+  else player.attackPoints += ([0, 0, 1, 2, 4][cleared] ?? 0);
+  const requested = player.selfClearRows;
+  if (requested) {
+    delete player.selfClearRows;
+    const rows = player.board.flatMap((row, index) => row.some(Boolean) ? [index] : []).reverse().slice(0, requested);
+    player.attackPoints += (requested - rows.length) * ATTACK_COST_PER_LINE;
+    if (rows.length) { player.clearing = { rows, endsAt: now + 150, kind: 'self' }; return; }
+  }
+  settlePiece(state, id);
+};
+const finishLock = (state: TetrisState, id: string, now: number) => {
+  const player = state.players[id], phase = player.clearing!, rows = phase.rows;
+  collapseRows(player, rows);
+  delete player.clearing;
+  if (phase.kind === 'self') settlePiece(state, id);
+  else finishNaturalClear(state, id, rows.length, now);
+};
 const lock = (state: TetrisState, id: string, now: number) => {
   const player = state.players[id];
   for (const [x, y] of cells(player.active)) {
@@ -43,36 +88,15 @@ const lock = (state: TetrisState, id: string, now: number) => {
     }
     player.board[y][x] = player.active.type;
   }
-  const cleared = player.board.filter(row => row.every(Boolean)).length;
-  player.board = player.board.filter(row => !row.every(Boolean));
-  while (player.board.length < H) player.board.unshift(Array<string | null>(W).fill(null));
-  const level = Math.floor(player.lines / 10) + 1;
-  player.lines += cleared;
-  if (state.mode === 'solo') player.score += ([0, 100, 300, 500, 800][cleared] ?? 0) * level;
-  else player.attackPoints += cleared;
-  spawn(player);
-  resolveLoss(state);
+  const rows = player.board.flatMap((row, index) => row.every(Boolean) ? [index] : []);
+  if (rows.length) player.clearing = { rows, endsAt: now + 150 };
+  else finishNaturalClear(state, id, 0, now);
 };
 const down = (state: TetrisState, id: string, now: number) => {
-  const player = state.players[id]; if (player.lost) return;
+  const player = state.players[id]; if (player.lost || player.clearing) return;
   const next = { ...player.active, y: player.active.y + 1 };
-  if (valid(player, next)) { player.active = next; player.lockAt = undefined; releaseAttack(state, id, now); }
-  else if (player.lockAt && now >= player.lockAt) lock(state, id, now);
-  else if (!player.lockAt) player.lockAt = now + 500;
-};
-const addGarbage = (player: TetrisPlayerState, lines: number) => {
-  for (let i = 0; i < lines; i++) {
-    // Garbage pushing an occupied top row out of the playfield is a top-out,
-    // not a row that may silently disappear.
-    if (player.board[0].some(Boolean)) player.lost = true;
-    const gap = Math.floor(Math.random() * W);
-    player.board.shift();
-    player.board.push(Array.from({ length: W }, (_, x) => x === gap ? null : 'G'));
-    player.active.y--;
-  }
-  // A piece may temporarily touch the ceiling while it is still movable. Only
-  // a block actually pushed out of the board (checked above) is a top-out.
-  if (!valid(player, player.active)) player.lost = true;
+  if (valid(player, next)) { player.active = next; releaseAttack(state, id); if (!valid(player, { ...next, y: next.y + 1 })) lock(state, id, now); }
+  else lock(state, id, now);
 };
 const resolveLoss = (state: TetrisState) => {
   const lost = Object.entries(state.players).filter(([, player]) => player.lost).map(([id]) => id);
@@ -95,8 +119,10 @@ export const tetrisGame: GameModule<TetrisState> = {
   apply(state, { actorId, message, now = Date.now() }) {
     const player = state.players[actorId]; if (!player || player.lost || state.winnerId || state.draw || state.gameOver) throw new Error('目前不能操作');
     if (message.type === 'tetris.surrender') { player.lost = true; resolveLoss(state); return { eventType: 'tetris.surrender', payload: { playerId: actorId }, finished: true }; }
-    if (message.type === 'tetris.attack') { if (state.mode === 'solo') throw new Error('單人模式沒有攻擊'); const lines = Math.floor(message.lines); if (lines < 1 || lines > 4) throw new Error('攻擊必須為 1 到 4 排'); if (player.attackQueue.length >= 4) throw new Error('攻擊佇列已滿'); if (player.attackPoints < lines) throw new Error('攻擊點數不足'); player.attackPoints -= lines; player.attackQueue.push(lines); return { eventType: 'tetris.attackQueued', payload: { playerId: actorId, lines } }; }
-    if (message.type === 'tetris.move') { if (message.direction === 'down') down(state, actorId, now); else { const next = { ...player.active, x: player.active.x + (message.direction === 'left' ? -1 : 1) }; if (valid(player, next)) { player.active = next; if (valid(player, { ...next, y: next.y + 1 })) player.lockAt = undefined; } } }
+    if (message.type === 'tetris.attack') { if (state.mode === 'solo') throw new Error('單人模式沒有攻擊'); const lines = Math.floor(message.lines); if (lines < 1 || lines > 4) throw new Error('攻擊必須為 1 到 4 排'); if (player.attackQueue.length >= 4) throw new Error('攻擊佇列已滿'); const cost = lines * ATTACK_COST_PER_LINE; if (player.attackPoints < cost) throw new Error('攻擊點數不足'); player.attackPoints -= cost; player.attackQueue.push(lines); return { eventType: 'tetris.attackQueued', payload: { playerId: actorId, lines } }; }
+    if (message.type === 'tetris.selfClear') { if (state.mode !== 'versus') throw new Error('單人模式不能使用自清'); if (!Number.isInteger(message.lines) || message.lines < 1 || message.lines > 4) throw new Error('自清必須為 1 到 4 排'); if (player.selfClearRows || player.clearing) throw new Error('目前方塊已預約自清或正在消行'); const cost = message.lines * ATTACK_COST_PER_LINE; if (player.attackPoints < cost) throw new Error('攻擊點數不足'); player.attackPoints -= cost; player.selfClearRows = message.lines; return { eventType: 'tetris.selfClearQueued', payload: { playerId: actorId, lines: message.lines } }; }
+    if (player.clearing) return { eventType: message.type, payload: { playerId: actorId } };
+    if (message.type === 'tetris.move') { if (message.direction === 'down') down(state, actorId, now); else { const next = { ...player.active, x: player.active.x + (message.direction === 'left' ? -1 : 1) }; if (valid(player, next)) player.active = next; } }
     else if (message.type === 'tetris.swap') {
       const candidate = { ...player.active, type: player.next[0], rotation: 0 };
       if (!player.swapUsed && valid(player, candidate)) {
@@ -105,17 +131,15 @@ export const tetrisGame: GameModule<TetrisState> = {
         player.swapUsed = true;
       }
     }
-    else if (message.type === 'tetris.rotate') { const rotations = SHAPES[player.active.type].length; const candidate = { ...player.active, rotation: (player.active.rotation + 1) % rotations }; for (const kick of [0, -1, 1, -2, 2]) { const next = { ...candidate, x: candidate.x + kick }; if (valid(player, next)) { player.active = next; if (valid(player, { ...next, y: next.y + 1 })) player.lockAt = undefined; break; } } }
-    else if (message.type === 'tetris.hardDrop') { let next = { ...player.active }; while (valid(player, { ...next, y: next.y + 1 })) next = { ...next, y: next.y + 1 }; player.active = next; releaseAttack(state, actorId, now); lock(state, actorId, now); }
+    else if (message.type === 'tetris.rotate') { const rotations = SHAPES[player.active.type].length; const candidate = { ...player.active, rotation: (player.active.rotation + 1) % rotations }; for (const kick of [0, -1, 1, -2, 2]) { const next = { ...candidate, x: candidate.x + kick }; if (valid(player, next)) { player.active = next; break; } } }
+    else if (message.type === 'tetris.hardDrop') { let next = { ...player.active }; while (valid(player, { ...next, y: next.y + 1 })) next = { ...next, y: next.y + 1 }; player.active = next; releaseAttack(state, actorId); lock(state, actorId, now); }
     else throw new Error('無效的俄羅斯方塊操作');
     return { eventType: message.type, payload: { playerId: actorId }, finished: Boolean(state.winnerId || state.draw || state.gameOver) };
   },
   tick(state, { now }) {
     if (state.winnerId || state.draw || state.gameOver || state.pausedAt) return;
     let changed = false;
-    if (state.mode === 'versus') for (const player of Object.values(state.players)) { const due = player.incoming.filter(item => item.dueAt <= now); if (due.length) { player.incoming = player.incoming.filter(item => item.dueAt > now); addGarbage(player, due.reduce((sum, item) => sum + item.lines, 0)); changed = true; } }
-    resolveLoss(state);
-    for (const [id, player] of Object.entries(state.players)) if (player.lockAt && now >= player.lockAt) { lock(state, id, now); changed = true; }
+    for (const [id, player] of Object.entries(state.players)) if (player.clearing && now >= player.clearing.endsAt) { finishLock(state, id, now); changed = true; }
     if (!state.winnerId && !state.draw && !state.gameOver && now >= state.nextFallAt) { for (const id of Object.keys(state.players)) down(state, id, now); state.nextFallAt = now + interval(state); changed = true; }
     return changed ? { eventType: 'tetris.tick', payload: {}, finished: Boolean(state.winnerId || state.draw || state.gameOver) } : undefined;
   },

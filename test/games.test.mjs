@@ -100,46 +100,42 @@ test('單人俄羅斯方塊依消行前等級計分，且不允許攻擊', () =>
   const player = state.players.host;
   player.active = { type: 'O', rotation: 0, x: -1, y: 17 };
   for (const y of [18, 19]) for (let x = 2; x < 10; x++) player.board[y][x] = 'G';
-  tetrisGame.apply(state, { actorId: 'host', hostId: 'host', players: [players[0]], message: { type: 'tetris.hardDrop' } });
+  const now = Date.now();
+  tetrisGame.apply(state, { actorId: 'host', hostId: 'host', players: [players[0]], message: { type: 'tetris.hardDrop' }, now });
+  assert.deepEqual(player.clearing?.rows, [18, 19]);
+  tetrisGame.tick(state, { hostId: 'host', players: [players[0]], now: now + 150 });
   assert.equal(player.lines, 2);
   assert.equal(player.score, 300);
   assert.throws(() => tetrisGame.apply(state, { actorId: 'host', hostId: 'host', players: [players[0]], message: { type: 'tetris.attack', lines: 1 } }), /沒有攻擊/);
 });
 
-test('俄羅斯方塊高速重力不會重設落地鎖定倒數', () => {
+test('俄羅斯方塊高速重力落地立即鎖定', () => {
   const state = tetrisGame.createState([players[0]], { mode: 'solo' });
   const player = state.players.host;
   const now = Date.now();
   player.active = { type: 'O', rotation: 0, x: 3, y: 18 };
 
-  for (let elapsed = 0; elapsed < 500; elapsed += 50) {
-    state.nextFallAt = now + elapsed;
-    tetrisGame.tick(state, { hostId: 'host', players: [players[0]], now: now + elapsed });
-  }
-  assert.equal(player.lockAt, now + 500);
-
-  state.nextFallAt = now + 500;
-  tetrisGame.tick(state, { hostId: 'host', players: [players[0]], now: now + 500 });
+  state.nextFallAt = now;
+  tetrisGame.tick(state, { hostId: 'host', players: [players[0]], now });
   assert.equal(player.board[19][4], 'O');
   assert.equal(player.lockAt, undefined);
 });
 
-test('連續下鍵不會延後俄羅斯方塊落地鎖定', () => {
+test('連續下鍵不會移動已鎖定方塊', () => {
   const state = tetrisGame.createState([players[0]], { mode: 'solo' });
   const player = state.players.host;
   player.active = { type: 'O', rotation: 0, x: 3, y: 18 };
   tetrisGame.apply(state, { actorId: 'host', hostId: 'host', players: [players[0]], message: { type: 'tetris.move', direction: 'down' } });
-  const lockAt = player.lockAt;
+  const board = structuredClone(player.board);
   for (let i = 0; i < 10; i++) tetrisGame.apply(state, { actorId: 'host', hostId: 'host', players: [players[0]], message: { type: 'tetris.move', direction: 'down' } });
-  assert.equal(player.lockAt, lockAt);
+  assert.deepEqual(player.board, board);
 });
 
 test('單人俄羅斯方塊頂出棋盤會標記本局結束', () => {
   const state = tetrisGame.createState([players[0]], { mode: 'solo' });
   state.players.host.active = { type: 'T', rotation: 0, x: 3, y: -1 };
   for (let x = 3; x <= 5; x++) state.players.host.board[1][x] = 'G';
-  tetrisGame.apply(state, { actorId: 'host', hostId: 'host', players: [players[0]], message: { type: 'tetris.move', direction: 'down' } });
-  const result = tetrisGame.tick(state, { hostId: 'host', players: [players[0]], now: Date.now() + 600 });
+  const result = tetrisGame.apply(state, { actorId: 'host', hostId: 'host', players: [players[0]], message: { type: 'tetris.move', direction: 'down' } });
   assert.equal(result.finished, true);
   assert.equal(state.gameOver, true);
   assert.equal(state.winnerId, undefined);
@@ -186,49 +182,152 @@ test('俄羅斯方塊結束後局主可用原房間重開，其他人不可重�
 
 test('俄羅斯方塊攻擊會先抵銷最早來襲垃圾，且每次下移只釋放一筆', () => {
   const state = tetrisGame.createState(players, {});
-  state.players.host.attackPoints = 4;
-  state.players.host.incoming.push({ lines: 2, dueAt: Date.now() + 1000, fromPlayerId: 'guest' });
+  state.players.host.attackPoints = 12;
+  state.players.host.incoming.push({ lines: 2, fromPlayerId: 'guest' });
   tetrisGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'tetris.attack', lines: 3 } });
   assert.deepEqual(state.players.host.attackQueue, [3]);
+  assert.equal(state.players.host.attackPoints, 0);
   tetrisGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'tetris.move', direction: 'down' } });
   assert.equal(state.players.host.attackQueue.length, 0);
   assert.equal(state.players.host.incoming.length, 0);
   assert.equal(state.players.guest.incoming[0].lines, 1);
 });
 
+test('對戰攻擊點數只獎勵連續消多排', () => {
+  for (const [cleared, points] of [[1, 0], [2, 1], [3, 2], [4, 4]]) {
+    const state = tetrisGame.createState(players, {}), player = state.players.host, now = Date.now();
+    player.active = { type: 'I', rotation: 1, x: -2, y: 16 };
+    for (let y = 20 - cleared; y < 20; y++) for (let x = 1; x < 10; x++) player.board[y][x] = 'G';
+    tetrisGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'tetris.hardDrop' }, now });
+    assert.equal(player.attackPoints, 0);
+    tetrisGame.tick(state, { hostId: 'host', players, now: now + 150 });
+    assert.equal(player.lines, cleared);
+    assert.equal(player.attackPoints, points);
+  }
+});
+
 test('俄羅斯方塊攻擊佇列最多四筆，硬降只釋放一筆', () => {
   const state = tetrisGame.createState(players, {});
-  state.players.host.attackPoints = 5;
+  state.players.host.attackPoints = 20;
   for (let i = 0; i < 4; i++) tetrisGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'tetris.attack', lines: 1 } });
   assert.throws(() => tetrisGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'tetris.attack', lines: 1 } }), /佇列已滿/);
   tetrisGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'tetris.hardDrop' } });
   assert.equal(state.players.host.attackQueue.length, 3);
 });
 
-test('垃圾列推掉已佔用的最上排時，俄羅斯方塊會正常結束', () => {
+test('每攻擊一排消耗四點，不足時不能排隊', () => {
+  const state = tetrisGame.createState(players, {}), player = state.players.host;
+  player.attackPoints = 7;
+  assert.throws(() => tetrisGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'tetris.attack', lines: 2 } }), /攻擊點數不足/);
+  assert.equal(player.attackPoints, 7);
+  tetrisGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'tetris.attack', lines: 1 } });
+  assert.equal(player.attackPoints, 3);
+  assert.deepEqual(player.attackQueue, [1]);
+});
+
+test('自清預約立即扣點，每顆只限一次，不計入消行或攻擊點數', () => {
+  const state = tetrisGame.createState(players, {}), player = state.players.host, now = Date.now();
+  player.attackPoints = 16;
+  player.active = { type: 'O', rotation: 0, x: 3, y: 18 };
+  tetrisGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'tetris.selfClear', lines: 4 }, now });
+  assert.equal(player.attackPoints, 0);
+  assert.equal(player.selfClearRows, 4);
+  assert.throws(() => tetrisGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'tetris.selfClear', lines: 1 }, now }), /已預約/);
+  tetrisGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'tetris.hardDrop' }, now });
+  assert.equal(player.clearing?.kind, 'self');
+  assert.deepEqual(player.clearing?.rows, [19, 18]);
+  assert.equal(player.attackPoints, 8);
+  tetrisGame.tick(state, { hostId: 'host', players, now: now + 149 });
+  assert.equal(player.board[19][4], 'O');
+  tetrisGame.tick(state, { hostId: 'host', players, now: now + 150 });
+  assert.equal(player.board[19][4], null);
+  assert.equal(player.lines, 0);
+  assert.equal(player.attackPoints, 8);
+  assert.equal(player.selfClearRows, undefined);
+});
+
+test('一般消行、自清和來襲垃圾依序處理', () => {
+  const state = tetrisGame.createState(players, {}), player = state.players.host, now = Date.now();
+  player.attackPoints = 8;
+  player.active = { type: 'O', rotation: 0, x: -1, y: 17 };
+  for (let x = 2; x < 10; x++) player.board[19][x] = 'I';
+  player.incoming.push({ lines: 1, fromPlayerId: 'guest' });
+  tetrisGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'tetris.selfClear', lines: 2 }, now });
+  tetrisGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'tetris.hardDrop' }, now });
+  assert.deepEqual(player.clearing?.rows, [19]);
+  assert.equal(player.clearing?.kind, undefined);
+  assert.equal(player.incoming.length, 1);
+  tetrisGame.tick(state, { hostId: 'host', players, now: now + 150 });
+  assert.equal(player.lines, 1);
+  assert.equal(player.clearing?.kind, 'self');
+  assert.deepEqual(player.clearing?.rows, [19]);
+  assert.equal(player.attackPoints, 4);
+  assert.equal(player.incoming.length, 1);
+  tetrisGame.tick(state, { hostId: 'host', players, now: now + 300 });
+  assert.equal(player.clearing, undefined);
+  assert.equal(player.incoming.length, 0);
+  assert.equal(player.board[19].filter(Boolean).length, 9);
+  assert.equal(player.lines, 1);
+  assert.equal(player.attackPoints, 4);
+});
+
+test('自清僅限對戰且需整數排數及足夠點數', () => {
+  const solo = tetrisGame.createState([players[0]], { mode: 'solo' });
+  assert.throws(() => tetrisGame.apply(solo, { actorId: 'host', hostId: 'host', players: [players[0]], message: { type: 'tetris.selfClear', lines: 1 } }), /單人模式/);
+  const state = tetrisGame.createState(players, {}), player = state.players.host;
+  player.attackPoints = 3;
+  for (const lines of [0, 1.5, 5]) assert.throws(() => tetrisGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'tetris.selfClear', lines } }), /1 到 4 排/);
+  assert.throws(() => tetrisGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'tetris.selfClear', lines: 1 } }), /點數不足/);
+  assert.equal(player.selfClearRows, undefined);
+  assert.equal(player.attackPoints, 3);
+});
+
+test('來襲攻擊等目前方塊落定才生效，推出已佔用頂排時結束', () => {
   const state = tetrisGame.createState(players, {});
   state.players.host.board[0][0] = 'T';
-  state.players.host.incoming.push({ lines: 1, dueAt: Date.now() - 1, fromPlayerId: 'guest' });
-  const result = tetrisGame.tick(state, { hostId: 'host', players, now: Date.now() });
+  state.players.host.incoming.push({ lines: 1, fromPlayerId: 'guest' });
+  state.nextFallAt = Date.now() + 10_000;
+  tetrisGame.tick(state, { hostId: 'host', players, now: Date.now() + 2000 });
+  assert.equal(state.players.host.board[0][0], 'T');
+  assert.equal(state.players.host.incoming.length, 1);
+  const result = tetrisGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'tetris.hardDrop' } });
   assert.equal(result.finished, true);
   assert.equal(state.winnerId, 'guest');
 });
 
-test('活動方塊暫時貼頂但尚未推出棋盤時，俄羅斯方塊不會判負', () => {
+test('來襲攻擊不會移動尚未落定的活動方塊', () => {
   const state = tetrisGame.createState(players, {});
   state.players.host.active.y = 0;
-  state.players.host.incoming.push({ lines: 1, dueAt: Date.now() - 1, fromPlayerId: 'guest' });
-  const result = tetrisGame.tick(state, { hostId: 'host', players, now: Date.now() });
-  assert.equal(result.finished, false);
+  state.players.host.incoming.push({ lines: 1, fromPlayerId: 'guest' });
+  state.nextFallAt = Date.now() + 10_000;
+  const before = structuredClone(state.players.host.active);
+  tetrisGame.tick(state, { hostId: 'host', players, now: Date.now() + 2000 });
+  assert.deepEqual(state.players.host.active, before);
+  assert.equal(state.players.host.incoming.length, 1);
   assert.equal(state.players.host.lost, undefined);
+});
+
+test('消行動畫完成後才讓剩餘來襲攻擊生效', () => {
+  const state = tetrisGame.createState(players, {}), player = state.players.host, now = Date.now();
+  player.active = { type: 'O', rotation: 0, x: -1, y: 17 };
+  for (let x = 2; x < 10; x++) player.board[19][x] = 'I';
+  player.incoming.push({ lines: 1, fromPlayerId: 'guest' });
+  tetrisGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'tetris.hardDrop' }, now });
+  assert.deepEqual(player.clearing?.rows, [19]);
+  assert.equal(player.incoming.length, 1);
+  tetrisGame.tick(state, { hostId: 'host', players, now: now + 149 });
+  assert.equal(player.incoming.length, 1);
+  tetrisGame.tick(state, { hostId: 'host', players, now: now + 150 });
+  assert.equal(player.incoming.length, 0);
+  assert.equal(player.lines, 1);
+  assert.equal(player.board[19].filter(Boolean).length, 9);
 });
 
 test('活動方塊鎖定時超出棋盤頂端會立刻結算對手勝利', () => {
   const state = tetrisGame.createState(players, {});
   state.players.host.active = { type: 'T', rotation: 0, x: 3, y: -1 };
   for (let x = 3; x <= 5; x++) state.players.host.board[1][x] = 'G';
-  tetrisGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'tetris.move', direction: 'down' } });
-  const result = tetrisGame.tick(state, { hostId: 'host', players, now: Date.now() + 600 });
+  const result = tetrisGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'tetris.move', direction: 'down' } });
   assert.equal(result.finished, true);
   assert.equal(state.winnerId, 'guest');
 });

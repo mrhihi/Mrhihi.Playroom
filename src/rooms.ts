@@ -229,13 +229,13 @@ export class RoomService {
     if (room.status !== 'playing') return false;
     if (room.game === 'tetris') {
       const disconnected = room.players.find(player => !player.connected);
-      const state = room.state as { pausedAt?: number; pausedPlayerId?: string; nextFallAt: number; winnerId?: string };
+      const state = room.state as { pausedAt?: number; pausedPlayerId?: string; nextFallAt: number; winnerId?: string; players: Record<string, { clearing?: { endsAt: number } }> };
       if (disconnected) {
         if (!state.pausedAt) { state.pausedAt = now; state.pausedPlayerId = disconnected.id; room.stateVersion++; return true; }
         if (now - state.pausedAt >= 30_000) { state.winnerId = room.players.find(player => player.id !== disconnected.id)?.id; this.finish(room); return true; }
         return false;
       }
-      if (state.pausedAt) { state.nextFallAt += now - state.pausedAt; delete state.pausedAt; delete state.pausedPlayerId; room.stateVersion++; return true; }
+      if (state.pausedAt) { const elapsed = now - state.pausedAt; state.nextFallAt += elapsed; for (const player of Object.values(state.players)) if (player.clearing) player.clearing.endsAt += elapsed; delete state.pausedAt; delete state.pausedPlayerId; room.stateVersion++; return true; }
     }
     const result = getGame(room.game).tick?.(room.state, { hostId: room.hostId, players: room.players, now });
     if (!result) return false;
