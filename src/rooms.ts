@@ -273,14 +273,14 @@ export class RoomService {
   }
   tetrisLeaderboard(mode: 'solo' | 'versus') { return this.db.getTetrisLeaderboard(mode); }
   openTetrisRooms() {
-    const versus: { id: string; players: string[] }[] = [];
-    const spectate: { id: string; players: string[]; spectatorCount: number }[] = [];
+    const versus: { id: string; players: string[]; hasPassword: boolean }[] = [];
+    const spectate: { id: string; players: string[]; spectatorCount: number; hasPassword: boolean }[] = [];
     for (const room of this.rooms.values()) {
-      if (room.game !== 'tetris' || room.config.mode !== 'versus' || room.passwordHash) continue;
+      if (room.game !== 'tetris' || room.config.mode !== 'versus') continue;
       if (room.status === 'lobby' && room.players.length === 1 && room.players.some(player => player.id === room.hostId && player.connected)) {
-        versus.push({ id: room.id, players: room.players.map(player => player.name) });
+        versus.push({ id: room.id, players: room.players.map(player => player.name), hasPassword: Boolean(room.passwordHash) });
       } else if (room.status === 'playing' && room.config.allowSpectators !== false) {
-        spectate.push({ id: room.id, players: room.players.map(player => player.name), spectatorCount: room.spectators.filter(player => player.connected).length });
+        spectate.push({ id: room.id, players: room.players.map(player => player.name), spectatorCount: room.spectators.filter(player => player.connected).length, hasPassword: Boolean(room.passwordHash) });
       }
     }
     return { versus, spectate };
