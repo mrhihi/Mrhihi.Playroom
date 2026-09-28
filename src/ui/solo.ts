@@ -59,8 +59,12 @@ export async function mountSolo(h: Helpers, start?: { name: string; password: st
     if (start) session.save.deviceInfo = detectDevice();
     session.paused = !start || document.hidden || !document.hasFocus();
     let storageFailed = false, last = performance.now(), held: string | undefined, delay: ReturnType<typeof setTimeout> | undefined, repeat: ReturnType<typeof setInterval> | undefined, uploading = false;
+    const heldKeys = new Set<string>();
+    let horizontalKey: string | undefined, horizontalDelay: ReturnType<typeof setTimeout> | undefined, horizontalRepeat: ReturnType<typeof setInterval> | undefined;
     const persist = () => { try { localStorage.setItem(SAVE, JSON.stringify(session.save)); } catch { storageFailed = true; } };
     const stop = () => { clearTimeout(delay); clearInterval(repeat); held = undefined; };
+    const stopHorizontal = () => { clearTimeout(horizontalDelay); clearInterval(horizontalRepeat); horizontalKey = undefined; heldKeys.clear(); };
+    const stopAll = () => { stop(); stopHorizontal(); };
     const ghost = () => read('playroom:tetris:ghost') === true;
     const side = () => read('playroom:tetris:controls-side') === 'left' ? 'left' : 'right';
     const render = () => {
@@ -79,14 +83,23 @@ export async function mountSolo(h: Helpers, start?: { name: string; password: st
       catch { storageFailed = true; h.notice('無法保存待傳結果，請保持此頁開啟並重試。'); }
       render(); await retryPending(h, session.save); uploading = false; render();
     };
-    const changed = () => { persist(); render(); if (session.save.state.gameOver) { stop(); void upload(); } };
+    const changed = () => { persist(); render(); if (session.save.state.gameOver) { stopAll(); void upload(); } };
     const sync = () => { const now = performance.now(); const changed = session.advance(now-last); last=now; return changed; };
-    const pause = () => { if (session.save.state.gameOver) return; sync(); session.paused=true; stop(); changed(); };
+    const pause = () => { if (session.save.state.gameOver) return; sync(); session.paused=true; stopAll(); changed(); };
     const control = (c: string) => {
       if (session.paused || session.save.state.gameOver) return;
       sync();
       const message: ClientMessage = c === 'left' || c === 'right' || c === 'down' ? { type: 'tetris.move', direction: c } : c === 'rotate' ? { type: 'tetris.rotate' } : c === 'swap' ? { type: 'tetris.swap' } : { type: 'tetris.hardDrop' };
       session.apply(message); changed();
+    };
+    const startHorizontal = (key: string) => {
+      clearTimeout(horizontalDelay); clearInterval(horizontalRepeat);
+      horizontalKey = key;
+      const direction = key === 'ArrowLeft' ? 'left' : 'right';
+      control(direction);
+      if (!session.paused && !session.save.state.gameOver) horizontalDelay = setTimeout(() => {
+        if (horizontalKey === key) horizontalRepeat = setInterval(() => control(direction), 35);
+      }, 100);
     };
     const togglePause = () => { if (session.save.state.gameOver || document.hidden) return; if (session.paused) { last=performance.now(); session.paused=false; changed(); } else pause(); };
     const click = (e: Event) => {
@@ -95,32 +108,45 @@ export async function mountSolo(h: Helpers, start?: { name: string; password: st
       if (action === 'pause') togglePause();
       if (action === 'retry') void upload();
       if (action === 'new') { try { sessionStorage.setItem('playroom:tetris:solo:start', JSON.stringify({ name: session.save.name, password: '' })); location.href=h.withBasePath('/games/tetris/solo'); } catch { h.notice('無法儲存開局設定，請回大廳開新局。'); } }
-      if (action === 'ghost' || action === 'side') { stop(); try { localStorage.setItem(action === 'ghost' ? 'playroom:tetris:ghost' : 'playroom:tetris:controls-side', JSON.stringify(action === 'ghost' ? !ghost() : side()==='left'?'right':'left')); } catch { h.notice('無法儲存操作設定'); } render(); }
+      if (action === 'ghost' || action === 'side') { stopAll(); try { localStorage.setItem(action === 'ghost' ? 'playroom:tetris:ghost' : 'playroom:tetris:controls-side', JSON.stringify(action === 'ghost' ? !ghost() : side()==='left'?'right':'left')); } catch { h.notice('無法儲存操作設定'); } render(); }
     };
     const key = (e: KeyboardEvent) => {
       if ((e.target instanceof Element && e.target.closest('input,textarea,select,[contenteditable]')) || e.ctrlKey || e.metaKey || e.altKey) return;
       if (e.key.toLowerCase()==='p' || e.key==='Escape') { e.preventDefault(); if (!e.repeat) togglePause(); return; }
       if (e.key.toLowerCase()==='c') { e.preventDefault(); if (!e.repeat) control('swap'); return; }
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        e.preventDefault();
+        if (!session.paused && !heldKeys.has(e.key)) { heldKeys.add(e.key); startHorizontal(e.key); }
+        return;
+      }
       const c = ({ArrowLeft:'left',ArrowRight:'right',ArrowDown:'down',ArrowUp:'rotate',' ':'drop'} as Record<string,string>)[e.key];
       if (c) { e.preventDefault(); control(c); }
+    };
+    const keyUp = (e: KeyboardEvent) => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      heldKeys.delete(e.key);
+      if (horizontalKey !== e.key) return;
+      clearTimeout(horizontalDelay); clearInterval(horizontalRepeat); horizontalKey = undefined;
+      const other = e.key === 'ArrowLeft' ? 'ArrowRight' : 'ArrowLeft';
+      if (heldKeys.has(other) && !session.paused) startHorizontal(other);
     };
     const pointer = (e: PointerEvent) => {
       const c = (e.target as Element).closest<HTMLElement>('[data-solo-control]')?.dataset.soloControl;
       if (!c || e.button!==0 || session.paused) return;
       e.preventDefault(); stop(); held=c; document.body.setPointerCapture(e.pointerId); control(c);
-      if (['left','right','down'].includes(c) && !session.save.state.gameOver) delay=setTimeout(()=> { if(held===c) repeat=setInterval(()=>control(c),75); },260);
+      if (['left','right','down'].includes(c) && !session.save.state.gameOver) delay=setTimeout(()=> { if(held===c) repeat=setInterval(()=>control(c),c==='down'?75:35); },c==='down'?260:100);
     };
     const visible = () => { if(document.hidden) pause(); };
     const uploaded = (e: Event) => { const d=(e as CustomEvent).detail; if(d.submissionId===session.save.submissionId) { session.save.uploadedId=d.roomId; session.save.password=''; persist(); render(); } };
-    h.root.addEventListener('click',click); document.addEventListener('keydown',key);
+    h.root.addEventListener('click',click); document.addEventListener('keydown',key); document.addEventListener('keyup',keyUp);
     document.body.addEventListener('pointerdown',pointer); for(const n of ['pointerup','pointercancel','lostpointercapture']) document.body.addEventListener(n,stop);
     window.addEventListener('blur',pause); document.addEventListener('visibilitychange',visible); window.addEventListener('solo-uploaded',uploaded);
     const online = () => { void upload(); };
     window.addEventListener('online',online);
     persist(); render(); if(session.save.state.gameOver) void upload();
     const timer=setInterval(()=> { if(sync()) changed(); },50);
-    await new Promise<void>(resolve=>window.addEventListener('pagehide',()=> { pause(); persist(); stop(); clearInterval(timer); resolve(); },{once:true}));
-    h.root.removeEventListener('click',click); document.removeEventListener('keydown',key); document.body.removeEventListener('pointerdown',pointer);
+    await new Promise<void>(resolve=>window.addEventListener('pagehide',()=> { pause(); persist(); stopAll(); clearInterval(timer); resolve(); },{once:true}));
+    h.root.removeEventListener('click',click); document.removeEventListener('keydown',key); document.removeEventListener('keyup',keyUp); document.body.removeEventListener('pointerdown',pointer);
     for(const n of ['pointerup','pointercancel','lostpointercapture']) document.body.removeEventListener(n,stop);
     window.removeEventListener('blur',pause); document.removeEventListener('visibilitychange',visible); window.removeEventListener('solo-uploaded',uploaded); window.removeEventListener('online',online);
   });

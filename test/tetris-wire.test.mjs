@@ -54,6 +54,55 @@ function viewer(id, state, config = {}) {
   return w;
 }
 
+test('對戰左右鍵長按自行連續送出移動，放開後停止', async () => {
+  const w = viewer('host', tetrisGame.createState(players, {}));
+  try {
+  w.eval('window.sentMoves=[];WebSocket.prototype.send=message=>sentMoves.push(JSON.parse(message))');
+  const press = key => w.document.body.dispatchEvent(new w.KeyboardEvent('keydown', { key, bubbles: true }));
+  const release = key => w.document.body.dispatchEvent(new w.KeyboardEvent('keyup', { key, bubbles: true }));
+  press('ArrowLeft');
+  assert.equal(w.sentMoves.length, 1);
+  press('ArrowLeft');
+  assert.equal(w.sentMoves.length, 1);
+  await delay(155);
+  assert.ok(w.sentMoves.length >= 2);
+  assert.ok(w.sentMoves.every(message => message.type === 'tetris.move' && message.direction === 'left'));
+  release('ArrowLeft');
+  const stopped = w.sentMoves.length;
+  await delay(80);
+  assert.equal(w.sentMoves.length, stopped);
+  press('ArrowRight');
+  assert.equal(w.sentMoves.at(-1).direction, 'right');
+  w.dispatchEvent(new w.Event('blur'));
+  const blurred = w.sentMoves.length;
+  await delay(150);
+  assert.equal(w.sentMoves.length, blurred);
+  } finally { w.close(); }
+});
+
+test('對戰觸控左右長按快速連續送出移動，放開後停止', async () => {
+  const w = viewer('host', tetrisGame.createState(players, {}));
+  try {
+    w.eval('window.sentMoves=[];WebSocket.prototype.send=message=>sentMoves.push(JSON.parse(message))');
+    w.document.body.setPointerCapture = () => {};
+    w.document.body.hasPointerCapture = () => false;
+    const pointer = (target, type) => {
+      const event = new w.Event(type, { bubbles: true });
+      Object.defineProperties(event, { button: { value: 0 }, pointerId: { value: 1 } });
+      target.dispatchEvent(event);
+    };
+    pointer(w.document.querySelector('[data-tetris-control="right"]'), 'pointerdown');
+    assert.equal(w.sentMoves.length, 1);
+    await delay(155);
+    assert.ok(w.sentMoves.length >= 2);
+    assert.ok(w.sentMoves.every(message => message.type === 'tetris.move' && message.direction === 'right'));
+    pointer(w.document.body, 'pointerup');
+    const stopped = w.sentMoves.length;
+    await delay(80);
+    assert.equal(w.sentMoves.length, stopped);
+  } finally { w.close(); }
+});
+
 test('雙方集氣依玩家分開更新，滿格門檻符合攻擊模式', () => {
   for (const [config, goal] of [[{}, 4], [{ attackEnabled: false }, 4], [{ attackMode: 'auto' }, 16]]) {
     for (const id of ['host', 'guest', 'viewer']) {

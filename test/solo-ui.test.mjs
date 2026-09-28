@@ -39,6 +39,34 @@ test('本地頁操作不傳網路；快捷鍵、失焦與重新整理保持暫�
   w.dispatchEvent(new w.Event('pagehide'));await resumed;dom.window.close();
 });
 
+test('左右鍵長按立即移動並快速連續移動，放開與暫停後停止',async()=>{
+  const {w,h,dom}=environment();const mounted=w.SoloUI.mountSolo(h,{name:'橫移',password:''});await wait();
+  const press=key=>w.document.dispatchEvent(new w.KeyboardEvent('keydown',{key,bubbles:true}));
+  const release=key=>w.document.dispatchEvent(new w.KeyboardEvent('keyup',{key,bubbles:true}));
+  press('ArrowLeft');assert.equal(saved(w).state.players.solo.active.x,2);
+  press('ArrowLeft');press('ArrowLeft');assert.equal(saved(w).state.players.solo.active.x,2);
+  await new Promise(resolve=>setTimeout(resolve,150));
+  assert.ok(saved(w).state.players.solo.active.x<2);
+  release('ArrowLeft');const stopped=saved(w).state.players.solo.active.x;
+  await new Promise(resolve=>setTimeout(resolve,80));assert.equal(saved(w).state.players.solo.active.x,stopped);
+  press('ArrowRight');assert.equal(saved(w).state.players.solo.active.x,stopped+1);
+  press('p');const paused=saved(w).state.players.solo.active.x;
+  await new Promise(resolve=>setTimeout(resolve,150));assert.equal(saved(w).state.players.solo.active.x,paused);
+  release('ArrowRight');w.dispatchEvent(new w.Event('pagehide'));await mounted;dom.window.close();
+});
+
+test('觸控左右長按使用相同的快速橫移節奏',async()=>{
+  const {w,h,dom}=environment();const mounted=w.SoloUI.mountSolo(h,{name:'觸控',password:''});await wait();
+  w.document.body.setPointerCapture=()=>{};
+  const pointer=(target,type)=>{const event=new w.Event(type,{bubbles:true});Object.defineProperties(event,{button:{value:0},pointerId:{value:1}});target.dispatchEvent(event);};
+  const button=h.root.querySelector('[data-solo-control="left"]');
+  pointer(button,'pointerdown');assert.equal(saved(w).state.players.solo.active.x,2);
+  await new Promise(resolve=>setTimeout(resolve,150));assert.ok(saved(w).state.players.solo.active.x<2);
+  pointer(w.document.body,'pointerup');const stopped=saved(w).state.players.solo.active.x;
+  await new Promise(resolve=>setTimeout(resolve,80));assert.equal(saved(w).state.players.solo.active.x,stopped);
+  w.dispatchEvent(new w.Event('pagehide'));await mounted;dom.window.close();
+});
+
 test('第二分頁拒絕取得同一局操作權；輸入框不攔截快捷鍵',async()=>{
   const {w,h,dom}=environment();const mounted=w.SoloUI.mountSolo(h,{name:'測試',password:''});await wait();
   const other=w.document.createElement('div');await w.SoloUI.mountSolo({...h,root:other});assert.match(other.textContent,/另一個分頁/);
