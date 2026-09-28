@@ -12,11 +12,19 @@ const SHAPES: Record<string, number[][][]> = {
   Z: [[[0,0],[1,0],[1,1],[2,1]], [[2,0],[1,1],[2,1],[1,2]]],
 };
 const board = () => Array.from({ length: H }, () => Array<string | null>(W).fill(null));
-const shuffle = <T>(items: T[]) => { const copy = [...items]; for (let i = copy.length - 1; i; i--) { const j = Math.floor(Math.random() * (i + 1)); [copy[i], copy[j]] = [copy[j], copy[i]]; } return copy; };
+const pieceRandom = (player: TetrisPlayerState) => {
+  if (player.pieceRandomState === undefined) return Math.random();
+  player.pieceRandomState = (player.pieceRandomState + 0x6D2B79F5) >>> 0;
+  let value = player.pieceRandomState;
+  value = Math.imul(value ^ (value >>> 15), value | 1);
+  value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
+  return ((value ^ (value >>> 14)) >>> 0) / 0x100000000;
+};
+const shuffle = <T>(items: T[], random: () => number) => { const copy = [...items]; for (let i = copy.length - 1; i; i--) { const j = Math.floor(random() * (i + 1)); [copy[i], copy[j]] = [copy[j], copy[i]]; } return copy; };
 const cells = (piece: TetrisPiece) => SHAPES[piece.type][piece.rotation % SHAPES[piece.type].length].map(([x, y]) => [piece.x + x, piece.y + y] as const);
 const valid = (player: TetrisPlayerState, piece: TetrisPiece) => cells(piece).every(([x, y]) => x >= 0 && x < W && y < H && (y < 0 || !player.board[y][x]));
 const interval = (state: TetrisState) => { const level = Math.max(...Object.values(state.players).map(p => Math.floor(p.lines / 10) + 1)); return Math.max(50, 1000 * (0.8 - .007 * (level - 1)) ** (level - 1)); };
-const refill = (player: TetrisPlayerState) => { while (player.next.length < 4) { if (!player.bag.length) player.bag = shuffle(TYPES); player.next.push(player.bag.pop()!); } };
+const refill = (player: TetrisPlayerState) => { while (player.next.length < 4) { if (!player.bag.length) player.bag = shuffle(TYPES, () => pieceRandom(player)); player.next.push(player.bag.pop()!); } };
 const spawn = (player: TetrisPlayerState) => { player.swapUsed = false; player.lockAt = undefined; refill(player); player.active = { type: player.next.shift()!, rotation: 0, x: 3, y: -1 }; refill(player); if (!valid(player, player.active)) player.lost = true; };
 const queueAttack = (state: TetrisState, id: string, lines: number, now: number) => {
   const player = state.players[id]; let left = lines;
@@ -80,7 +88,8 @@ export const tetrisGame: GameModule<TetrisState> = {
     const mode = config.mode === 'solo' ? 'solo' : 'versus';
     if (players.length !== (mode === 'solo' ? 1 : 2)) throw new Error(mode === 'solo' ? '單人俄羅斯方塊需要一位玩家' : '俄羅斯方塊需要剛好兩位玩家');
     const state: TetrisState = { mode, players: {}, nextFallAt: Date.now() + 1000 };
-    for (const player of players) { const value: TetrisPlayerState = { board: board(), active: { type: 'T', rotation: 0, x: 3, y: -1 }, next: [], bag: [], lines: 0, score: 0, attackPoints: 0, attackQueue: [], incoming: [] }; state.players[player.id] = value; spawn(value); }
+    const pieceRandomState = mode === 'versus' ? Math.floor(Math.random() * 0x100000000) : undefined;
+    for (const player of players) { const value: TetrisPlayerState = { board: board(), active: { type: 'T', rotation: 0, x: 3, y: -1 }, next: [], bag: [], ...(pieceRandomState === undefined ? {} : { pieceRandomState }), lines: 0, score: 0, attackPoints: 0, attackQueue: [], incoming: [] }; state.players[player.id] = value; spawn(value); }
     return state;
   },
   apply(state, { actorId, message, now = Date.now() }) {

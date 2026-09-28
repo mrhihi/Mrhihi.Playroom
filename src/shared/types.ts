@@ -83,6 +83,7 @@ export interface TetrisPlayerState {
   active: TetrisPiece;
   next: string[];
   bag: string[];
+  pieceRandomState?: number;
   lines: number;
   score: number;
   attackPoints: number;

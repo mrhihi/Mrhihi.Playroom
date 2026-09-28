@@ -272,6 +272,19 @@ export class RoomService {
     return 'deleted' as const;
   }
   tetrisLeaderboard(mode: 'solo' | 'versus') { return this.db.getTetrisLeaderboard(mode); }
+  openTetrisRooms() {
+    const versus: { id: string; players: string[] }[] = [];
+    const spectate: { id: string; players: string[]; spectatorCount: number }[] = [];
+    for (const room of this.rooms.values()) {
+      if (room.game !== 'tetris' || room.config.mode !== 'versus' || room.passwordHash) continue;
+      if (room.status === 'lobby' && room.players.length === 1 && room.players.some(player => player.id === room.hostId && player.connected)) {
+        versus.push({ id: room.id, players: room.players.map(player => player.name) });
+      } else if (room.status === 'playing' && room.config.allowSpectators !== false) {
+        spectate.push({ id: room.id, players: room.players.map(player => player.name), spectatorCount: room.spectators.filter(player => player.connected).length });
+      }
+    }
+    return { versus, spectate };
+  }
   history(ids: string[]) { return this.db.getHistory(ids); }
   roomMessages(id: string) { return this.db.getMessages(id, 'room'); }
   events(id: string) { return this.db.getEvents(id); }

@@ -15,6 +15,13 @@ test('連線預覽和 C 鍵送出交換，暫停與觀眾不可操作',()=>{
   const editable=w.document.createElement('div');editable.setAttribute('contenteditable','true');w.document.body.append(editable);editable.dispatchEvent(new w.KeyboardEvent('keydown',{key:'c',bubbles:true}));assert.equal(w.sent.length,2);
   w.fixture.state.players.host.swapUsed=true;w.paint();assert.equal(w.document.querySelector('[data-action="tetris-swap"]').disabled,true);key('c');assert.equal(w.sent.length,2);
   w.fixture.state.players.host.swapUsed=false;w.fixture.state.pausedAt=100;w.paint();key('c');assert.equal(w.document.querySelector('[data-action="tetris-swap"]').disabled,true);assert.equal(w.sent.length,2);
-  delete w.fixture.state.pausedAt;w.viewer();key('c');assert.equal(w.document.querySelector('[data-action="tetris-swap"]'),null);assert.equal(w.sent.length,2);
+  assert.equal(w.document.body.classList.contains('tetris-mobile-playing'),true);
+  assert.equal(w.document.body.classList.contains('tetris-mobile-paused'),true);
+  assert.ok(w.document.querySelector('.tetris-control-rail .tetris-rail-opponent'));
+  assert.equal(w.document.querySelectorAll('[data-tetris-control]:disabled').length,5);
+  delete w.fixture.state.pausedAt;w.paint();
+  assert.equal(w.document.body.classList.contains('tetris-mobile-paused'),false);
+  assert.equal(w.document.querySelectorAll('[data-tetris-control]:disabled').length,0);
+  w.viewer();key('c');assert.equal(w.document.querySelector('[data-action="tetris-swap"]'),null);assert.equal(w.sent.length,2);
   w.close();
 });

@@ -16,6 +16,37 @@ const players = [
   { id: 'guest', name: '玩家', connected: true },
 ];
 
+test('雙人俄羅斯方塊依各自進度取得相同的多袋方塊序列', () => {
+  const state = tetrisGame.createState(players, {});
+  const draw = id => {
+    const player = state.players[id];
+    const type = player.active.type;
+    player.board = player.board.map(row => row.map(() => null));
+    tetrisGame.apply(state, { actorId: id, hostId: 'host', players, message: { type: 'tetris.hardDrop' } });
+    return type;
+  };
+  assert.equal(state.players.host.active.type, state.players.guest.active.type);
+  assert.deepEqual(state.players.host.next, state.players.guest.next);
+  const hostSequence = Array.from({ length: 28 }, () => draw('host'));
+  assert.equal(state.players.guest.active.type, hostSequence[0]);
+  const guestSequence = Array.from({ length: 28 }, () => draw('guest'));
+  assert.deepEqual(guestSequence, hostSequence);
+  assert.deepEqual(state.players.host.next, state.players.guest.next);
+  assert.deepEqual(state.players.host.bag, state.players.guest.bag);
+  assert.equal(state.players.host.pieceRandomState, state.players.guest.pieceRandomState);
+});
+
+test('雙人俄羅斯方塊交換只改變自己的方塊，不改變對手的抽牌進度', () => {
+  const state = tetrisGame.createState(players, {});
+  const guest = structuredClone(state.players.guest);
+  const randomState = state.players.host.pieceRandomState;
+  tetrisGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'tetris.swap' } });
+  assert.equal(state.players.host.active.type, guest.next[0]);
+  assert.equal(state.players.host.next[0], guest.active.type);
+  assert.equal(state.players.host.pieceRandomState, randomState);
+  assert.deepEqual(state.players.guest, guest);
+});
+
 test('俄羅斯方塊投降立即判對手獲勝，且不能重複投降', () => {
   const state = tetrisGame.createState(players, {});
   const context = { actorId: 'guest', hostId: 'host', players, message: { type: 'tetris.surrender' } };
