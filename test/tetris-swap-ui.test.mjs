@@ -64,12 +64,13 @@ test('自動與不攻擊對戰顯示集氣但只保留自清操作',()=>{
   try {
     assert.equal(w.document.querySelectorAll('[data-action="tetris-attack"]').length,0);
     assert.equal(w.document.querySelectorAll('[data-action="tetris-self-clear"]').length,4);
-    assert.match(w.document.querySelector('.tetris-charge').getAttribute('aria-label'),/12 \/ 16/);
+    assert.equal(w.document.querySelector('.tetris-charge').getAttribute('aria-valuenow'),'12');
+    assert.equal(w.document.querySelector('.tetris-charge').getAttribute('aria-valuemax'),'16');
     w.document.body.dispatchEvent(new w.KeyboardEvent('keydown',{key:'1',bubbles:true}));
     assert.equal(w.sent.length,0);
     w.fixture.config.attackEnabled=false;w.fixture.state.attackEnabled=false;w.paint();
     assert.equal(w.document.querySelectorAll('[data-action="tetris-attack"]').length,0);
-    assert.match(w.document.querySelector('.tetris-rule').textContent,/不攻擊/);
-    assert.match(w.document.querySelector('.tetris-charge').getAttribute('aria-label'),/4 \/ 4/);
+    assert.equal(w.document.querySelector('.tetris-rule'),null);
+    assert.equal(w.document.querySelector('.tetris-charge').getAttribute('aria-valuemax'),'4');
   } finally {w.close()}
 });

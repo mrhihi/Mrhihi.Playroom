@@ -10,6 +10,7 @@ import { createRealtime } from '../dist/realtime.js';
 import { tetrisGame } from '../dist/games/tetris.js';
 import { visibleTetris, diffTetris } from '../dist/tetris-wire.js';
 import { clientScript } from '../dist/ui/client.js';
+import { styles } from '../dist/ui/styles.js';
 
 const players = [{ id: 'host', name: '甲', connected: true }, { id: 'guest', name: '乙', connected: true }];
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -61,17 +62,19 @@ test('雙方集氣依玩家分開更新，滿格門檻符合攻擊模式', () =>
       state.players.guest.attackPoints = 1;
       const w = viewer(id, state, config);
       const charge = playerId => w.document.querySelector('.tetris-charge[data-player-id="' + playerId + '"]');
-      assert.equal(charge('host').querySelector('strong').textContent, (goal - 1) + ' / ' + goal + ' 點');
-      assert.equal(charge('guest').querySelector('strong').textContent, '1 / ' + goal + ' 點');
+      assert.equal(charge('host').getAttribute('aria-valuenow'), String(goal - 1));
+      assert.equal(charge('host').getAttribute('aria-valuemax'), String(goal));
+      assert.equal(charge('guest').getAttribute('aria-valuenow'), '1');
+      assert.equal(charge('host').textContent, '');
       const before = visibleTetris(state), after = structuredClone(state);
       after.players.host.attackPoints = goal;
       w.deliver({ type: 'tetris.patch', sequence: 1, patch: diffTetris(before, visibleTetris(after), ['host']) });
       assert.equal(charge('host').querySelector('i').style.width, '100%');
-      assert.equal(charge('guest').querySelector('strong').textContent, '1 / ' + goal + ' 點');
+      assert.equal(charge('guest').getAttribute('aria-valuenow'), '1');
       const next = structuredClone(after);
       next.players.guest.attackPoints = 0;
       w.deliver({ type: 'tetris.patch', sequence: 2, patch: diffTetris(visibleTetris(after), visibleTetris(next), ['guest']) });
-      assert.equal(charge('host').querySelector('strong').textContent, goal + ' / ' + goal + ' 點');
+      assert.equal(charge('host').getAttribute('aria-valuenow'), String(goal));
       assert.equal(charge('guest').querySelector('i').style.width, '0%');
       w.close();
     }
@@ -87,9 +90,28 @@ test('自動首攻狀態同步後，集氣門檻改為八點', () => {
   const patch = diffTetris(before, visibleTetris(state), ['host']);
   assert.equal(patch.players.host.autoFirstAttackQueued, true);
   w.deliver({ type: 'tetris.patch', sequence: 1, patch });
-  assert.match(w.document.querySelector('.tetris-charge[data-player-id="host"]').getAttribute('aria-label'), /0 \/ 8/);
-  assert.match(w.document.querySelector('.tetris-charge[data-player-id="guest"]').getAttribute('aria-label'), /0 \/ 16/);
+  assert.equal(w.document.querySelector('.tetris-charge[data-player-id="host"]').getAttribute('aria-valuemax'), '8');
+  assert.equal(w.document.querySelector('.tetris-charge[data-player-id="guest"]').getAttribute('aria-valuemax'), '16');
   w.close();
+});
+
+test('對戰資訊只顯示圖示與數字，投降按鈕位於右上角', () => {
+  const state = tetrisGame.createState(players, { attackMode: 'auto' });
+  const w = viewer('host', state, { attackMode: 'auto' });
+  const style = w.document.createElement('style'); style.textContent = styles; w.document.head.append(style);
+  try {
+    const stats = w.document.querySelector('.tetris-side-stats section[data-player-id="host"] .tetris-stat-list');
+    assert.equal(stats.querySelectorAll('.tetris-stat').length, 4);
+    assert.equal(stats.textContent.includes('消行'), false);
+    assert.equal(stats.textContent.includes('攻擊點'), false);
+    assert.equal(w.document.querySelector('.tetris-rule'), null);
+    assert.equal(w.document.querySelector('#tetris-sync-status'), null);
+    assert.equal(w.document.querySelector('.tetris-charge').textContent, '');
+    const surrender = w.document.querySelector('.tetris-surrender');
+    assert.equal(surrender.parentElement, w.document.querySelector('.tetris-shell>header'));
+    assert.equal(w.getComputedStyle(surrender).position, 'absolute');
+    assert.equal(w.getComputedStyle(surrender).right, '8px');
+  } finally { w.close(); }
 });
 
 test('雙方自己的更新只移動自己的大棋盤與預覽，對手更新只移動小棋盤', () => {
@@ -157,22 +179,24 @@ test('自己、對手與觀眾都能看到消行動畫階段', () => {
   }
 });
 
-test('被攻擊方在方塊落定前看見來襲與抵消提示，取消後提示消失', () => {
+test('被攻擊方在方塊落定前看見精簡來襲數字，取消後歸零', () => {
   const state = tetrisGame.createState(players, {}), w = viewer('host', state);
   const ownBoard = w.document.querySelector('.tetris-player.you .tetris-touch-board');
   assert.equal(ownBoard.querySelector('.tetris-incoming-warning'), null);
   const before = visibleTetris(state), attacked = structuredClone(state);
   attacked.players.host.incoming.push({ lines: 2, fromPlayerId: 'guest' });
   w.deliver({ type: 'tetris.patch', sequence: 1, patch: diffTetris(before, visibleTetris(attacked), ['host']) });
-  const warning = ownBoard.querySelector('.tetris-incoming-warning');
-  assert.match(warning.textContent, /來襲：2 排/);
-  assert.match(warning.textContent, /抵消/);
-  assert.equal(warning.getAttribute('role'), 'alert');
-  assert.equal(w.document.querySelector('.tetris-rail-opponent .tetris-incoming-warning'), null);
+  const indicator = w.document.querySelector('.tetris-side-stats section[data-player-id="host"] .tetris-stat.incoming');
+  assert.equal(indicator.querySelector('strong').textContent, '2');
+  assert.match(indicator.getAttribute('aria-label'), /落定後生效/);
+  assert.equal(indicator.classList.contains('is-active'), true);
+  assert.equal(ownBoard.querySelector('.tetris-incoming-warning'), null);
   const canceled = structuredClone(attacked);
   canceled.players.host.incoming = [];
   w.deliver({ type: 'tetris.patch', sequence: 2, patch: diffTetris(visibleTetris(attacked), visibleTetris(canceled), ['host']) });
-  assert.equal(ownBoard.querySelector('.tetris-incoming-warning'), null);
+  const clearedIndicator = w.document.querySelector('.tetris-side-stats section[data-player-id="host"] .tetris-stat.incoming');
+  assert.equal(clearedIndicator.querySelector('strong').textContent, '0');
+  assert.equal(clearedIndicator.classList.contains('is-active'), false);
   w.close();
 });
 

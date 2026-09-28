@@ -11,8 +11,6 @@ export class VersusPrediction {
   private nextSequence = 1;
   private clockOffset = 0;
   private offlineAt?: number;
-  private lastStatusPaint = 0;
-  private expiredPainted = false;
   private timer: ReturnType<typeof setInterval>;
 
   constructor(private readonly id: string, private readonly currentRoom: () => { state?: TetrisState; status?: string } | undefined,
@@ -23,11 +21,9 @@ export class VersusPrediction {
   get active() { return Boolean(this.state) && this.currentRoom()?.status === 'playing' && (this.offlineAt === undefined || Date.now() - this.offlineAt < 30_000); }
   get pendingCount() { return this.pending.length; }
   get lastSequence() { return this.nextSequence - 1; }
-  get oldestPendingMs() { return this.pending.length ? Date.now() + this.clockOffset - this.pending[0].clientTime : 0; }
-  get offlineMs() { return this.offlineAt === undefined ? 0 : Date.now() - this.offlineAt; }
 
   connection(open: boolean) {
-    if (open) { this.offlineAt = undefined; this.expiredPainted = false; return; }
+    if (open) { this.offlineAt = undefined; return; }
     this.offlineAt ??= Date.now();
   }
 
@@ -69,15 +65,9 @@ export class VersusPrediction {
   }
 
   private advance(force = false) {
-    if (!this.active || !this.state) {
-      if (this.state && this.offlineAt !== undefined && !this.expiredPainted) { this.expiredPainted = true; this.paint(); }
-      return;
-    }
+    if (!this.active || !this.state) return;
     const changed = advanceTetris(this.state, Date.now() + this.clockOffset, this.id);
-    if (changed || force || ((this.offlineAt !== undefined || this.oldestPendingMs > 500) && Date.now() - this.lastStatusPaint >= 250)) {
-      this.lastStatusPaint = Date.now();
-      this.paint();
-    }
+    if (changed || force) this.paint();
   }
 
   player() { return this.state?.players[this.id]; }
