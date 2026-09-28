@@ -13,6 +13,7 @@ export function registerHttp(app: FastifyInstance, rooms: RoomService) {
   const adminTokens = new Map<string, number>();
   const admin = (request: { headers: Record<string, unknown> }) => { const token = request.headers['x-admin-token']; const expires = typeof token === 'string' ? adminTokens.get(token) : undefined; return Boolean(expires && expires > Date.now()); };
   app.get('/assets/tetris-solo.js', async (_request, reply) => reply.type('application/javascript').header('cache-control', 'no-cache').send(await readFile(new URL(import.meta.url.includes('/dist/') ? './browser/solo.js' : '../dist/browser/solo.js', import.meta.url))));
+  app.get('/assets/tetris-versus.js', async (_request, reply) => reply.type('application/javascript').header('cache-control', 'no-cache').send(await readFile(new URL(import.meta.url.includes('/dist/') ? './browser/versus.js' : '../dist/browser/versus.js', import.meta.url))));
   app.post('/api/tetris/solo-results', { bodyLimit: 16_384 }, async (request, reply) => {
     try { return reply.code(201).send(rooms.submitSoloResult(request.body)); }
     catch (error) { return reply.code(error instanceof ZodError ? 400 : 409).send({ error: error instanceof ZodError ? '單人結果資料格式不正確' : error instanceof Error ? error.message : '無法保存結果' }); }

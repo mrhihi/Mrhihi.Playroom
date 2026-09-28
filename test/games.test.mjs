@@ -276,6 +276,31 @@ test('自動攻擊集滿十六點排入四排，滿佇列時保留點數', () =>
   assert.deepEqual(player.attackQueue, [1, 1, 1, 4]);
 });
 
+test('自動攻擊首攻後依可用點數送二至四排，雙方門檻獨立', () => {
+  for (const [points, expected, remaining] of [[7, [], 7], [8, [2], 0], [11, [2], 3], [12, [3], 0], [16, [4], 0], [24, [4, 2], 0]]) {
+    const state = tetrisGame.createState(players, { attackMode: 'auto' });
+    const host = state.players.host, guest = state.players.guest;
+    host.autoFirstAttackQueued = true;
+    host.attackPoints = points;
+    guest.attackPoints = 12;
+    tetrisGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'tetris.move', direction: 'down' } });
+    assert.deepEqual(host.attackQueue, expected);
+    assert.equal(host.attackPoints, remaining);
+    assert.equal(guest.autoFirstAttackQueued, undefined);
+    assert.equal(guest.attackPoints, 12);
+  }
+});
+
+test('自動攻擊佇列滿時保留點數，釋放後依累積點數排入攻擊', () => {
+  const state = tetrisGame.createState(players, { attackMode: 'auto' }), player = state.players.host;
+  player.autoFirstAttackQueued = true;
+  player.attackQueue = [2, 2, 2, 2];
+  player.attackPoints = 12;
+  tetrisGame.apply(state, { actorId: 'host', hostId: 'host', players, message: { type: 'tetris.move', direction: 'down' } });
+  assert.deepEqual(player.attackQueue, [2, 2, 2, 3]);
+  assert.equal(player.attackPoints, 0);
+});
+
 test('自清預約立即扣點，每顆只限一次，不計入消行或攻擊點數', () => {
   const state = tetrisGame.createState(players, {}), player = state.players.host, now = Date.now();
   player.attackPoints = 16;

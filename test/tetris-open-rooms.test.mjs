@@ -7,6 +7,26 @@ import { registerHttp } from '../dist/http.js';
 import { RoomService } from '../dist/rooms.js';
 import { clientScript } from '../dist/ui/client.js';
 
+test('歷程 API 顯示俄羅斯方塊房間的即時狀態', async () => {
+  const rooms = new RoomService(createDatabase(':memory:'));
+  const app = Fastify();
+  registerHttp(app, rooms);
+  const room = rooms.create('tetris', '局主', {}).room;
+  const history = async () => {
+    const response = await app.inject('/api/history?localIds=' + room.id);
+    assert.equal(response.statusCode, 200);
+    return response.json()[0].status;
+  };
+  assert.equal(await history(), 'lobby');
+  rooms.addPlayer(room, '對手');
+  rooms.start(room);
+  assert.equal(await history(), 'playing');
+  room.state.draw = true;
+  rooms.finish(room);
+  assert.equal(await history(), 'finished');
+  await app.close();
+});
+
 test('房間清單隨房況更新，標示密碼並排除單人、離線與關閉觀戰房間', async () => {
   const rooms = new RoomService(createDatabase(':memory:'));
   const app = Fastify();
@@ -46,6 +66,34 @@ test('房間清單隨房況更新，標示密碼並排除單人、離線與關�
   rooms.delete(closed.id);
   assert.deepEqual((await list()).versus, []);
   assert.equal(offline.players[0].connected, false);
+});
+
+test('遊戲大廳頂部顯示可重連的進行中房間', async () => {
+  const dom = new JSDOM('<main id="app"></main>', { url: 'http://localhost/games/tetris', runScripts: 'outside-only', pretendToBeVisual: true });
+  const w = dom.window;
+  w.localStorage.setItem('playroom:rooms', JSON.stringify(['playing1', 'finished1', 'unknown1']));
+  w.localStorage.setItem('playroom:token:playing1', JSON.stringify('reconnect-token'));
+  let history = [
+    { id: 'playing1', game: 'tetris', status: 'playing' },
+    { id: 'finished1', game: 'tetris', status: 'finished' },
+    { id: 'unknown1', game: 'tetris', status: 'playing' },
+  ];
+  w.fetch = async url => ({ ok: true, json: async () => String(url).includes('/api/history') ? history : String(url).includes('/api/tetris/leaderboard') ? { entries: [] } : { versus: [], spectate: [] } });
+  w.WebSocket = class { static OPEN = 1; static CLOSED = 3; send() {} close() {} };
+  w.eval(clientScript);
+  const settle = () => new Promise(resolve => setTimeout(resolve, 10));
+  await settle();
+  const entrance = w.document.querySelector('.tetris-active-rooms');
+  assert.ok(entrance);
+  assert.ok(entrance.compareDocumentPosition(w.document.querySelector('.setup')) & w.Node.DOCUMENT_POSITION_FOLLOWING);
+  assert.equal(entrance.querySelectorAll('a').length, 1);
+  assert.equal(entrance.querySelector('a').getAttribute('href'), '/rooms/playing1');
+  assert.match(entrance.textContent, /返回遊戲/);
+  history = history.map(item => ({ ...item, status: 'finished' }));
+  await w.eval("renderGameLobby('tetris')");
+  assert.equal(w.document.querySelector('.tetris-active-rooms'), null);
+  w.dispatchEvent(new w.Event('pagehide'));
+  w.close();
 });
 
 test('大廳分開顯示對戰與觀戰，重新整理可更新內容', async () => {

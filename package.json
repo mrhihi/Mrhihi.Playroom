@@ -7,7 +7,7 @@
     "build": "tsc -p tsconfig.json && npm run build:browser",
     "start": "node dist/server.js",
     "test": "npm run build && node --test test/*.test.mjs",
-    "build:browser": "esbuild src/ui/solo.ts --bundle --format=esm --platform=browser --target=es2022 --outfile=dist/browser/solo.js",
+    "build:browser": "esbuild src/ui/solo.ts src/ui/versus.ts --bundle --format=esm --platform=browser --target=es2022 --outdir=dist/browser",
     "predev": "npm run build:browser"
   },
   "allowScripts": {

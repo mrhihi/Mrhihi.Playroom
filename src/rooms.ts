@@ -13,6 +13,7 @@ export type Room = RoomSnapshot & {
   spectators: Player[];
   memberRoles: Map<string, 'player' | 'spectator'>;
   gameTimer?: NodeJS.Timeout;
+  disconnectedAt?: Map<string, number>;
 };
 
 const alphabet = '23456789abcdefghijkmnpqrstuvwxyz';
@@ -53,6 +54,7 @@ export class RoomService {
       latestDevices: new Map([[hostId, metadata.deviceInfo]]),
       clients: new Map(),
       tokens: new Map(),
+      disconnectedAt: new Map(),
       passwordHash: password ? hashPassword(password) : null,
     };
 
@@ -116,6 +118,7 @@ export class RoomService {
     if (room.game === 'tetris' && room.players.length !== (room.config.mode === 'solo' ? 1 : 2)) throw new Error(room.config.mode === 'solo' ? '單人俄羅斯方塊需要一位玩家才能開始' : '俄羅斯方塊需要兩位玩家才能開始');
     if (room.game === 'tetris') for (const player of room.players) player.deviceInfo = room.latestDevices.get(player.id);
     room.state = game.createState(room.players, room.config);
+    room.disconnectedAt?.clear();
     room.status = 'playing';
     room.stateVersion++;
     this.db.saveEvent(room.id, room.stateVersion, 'game.started', room.config);
@@ -159,7 +162,16 @@ export class RoomService {
 
     if (existingId) {
       const player = [...room.players, ...room.spectators].find(candidate => candidate.id === id);
-      if (player) { reconnected = !player.connected; player.connected = true; }
+      if (player) {
+        const leftAt = room.disconnectedAt?.get(id);
+        if (room.game === 'tetris' && room.status === 'playing' && leftAt !== undefined && Date.now() - leftAt >= 30_000) {
+          (room.state as { winnerId?: string }).winnerId = room.players.find(other => other.id !== id)?.id;
+          this.finish(room);
+        }
+        reconnected = !player.connected;
+        player.connected = true;
+        room.disconnectedAt?.delete(id);
+      }
     } else {
       const people = [...room.players, ...room.spectators];
       if (room.game === 'poll' && observer) {
@@ -211,13 +223,14 @@ export class RoomService {
     for (const listener of this.systemMessageListeners) listener({ ...row, roomId: room.id });
   }
 
-  apply(room: Room, playerId: string, message: ClientMessage) {
+  apply(room: Room, playerId: string, message: ClientMessage, now = Date.now()) {
     if (room.memberRoles.get(playerId) === 'spectator') throw new Error('觀眾不能操作遊戲');
     const result = getGame(room.game).apply(room.state, {
       actorId: playerId,
       hostId: room.hostId,
       players: room.players,
       message,
+      now,
     });
 
     room.stateVersion++;
@@ -229,13 +242,15 @@ export class RoomService {
     if (room.status !== 'playing') return false;
     if (room.game === 'tetris') {
       const disconnected = room.players.find(player => !player.connected);
-      const state = room.state as { pausedAt?: number; pausedPlayerId?: string; nextFallAt: number; winnerId?: string; players: Record<string, { clearing?: { endsAt: number }; lockAt?: number }> };
       if (disconnected) {
-        if (!state.pausedAt) { state.pausedAt = now; state.pausedPlayerId = disconnected.id; room.stateVersion++; return true; }
-        if (now - state.pausedAt >= 30_000) { state.winnerId = room.players.find(player => player.id !== disconnected.id)?.id; this.finish(room); return true; }
-        return false;
+        const disconnectedAt = room.disconnectedAt?.get(disconnected.id) ?? now;
+        room.disconnectedAt?.set(disconnected.id, disconnectedAt);
+        if (now - disconnectedAt >= 30_000) {
+          (room.state as { winnerId?: string }).winnerId = room.players.find(player => player.id !== disconnected.id)?.id;
+          this.finish(room);
+          return true;
+        }
       }
-      if (state.pausedAt) { const elapsed = now - state.pausedAt; state.nextFallAt += elapsed; for (const player of Object.values(state.players)) { if (player.clearing) player.clearing.endsAt += elapsed; if (player.lockAt !== undefined) player.lockAt += elapsed; } delete state.pausedAt; delete state.pausedPlayerId; room.stateVersion++; return true; }
     }
     const result = getGame(room.game).tick?.(room.state, { hostId: room.hostId, players: room.players, now });
     if (!result) return false;
@@ -286,7 +301,12 @@ export class RoomService {
     }
     return { versus, spectate };
   }
-  history(ids: string[]) { return this.db.getHistory(ids); }
+  history(ids: string[]) {
+    return this.db.getHistory(ids).map(row => {
+      const live = this.rooms.get(row.id);
+      return live ? { ...row, status: live.status } : row;
+    });
+  }
   roomMessages(id: string) { return this.db.getMessages(id, 'room'); }
   events(id: string) { return this.db.getEvents(id); }
   saveTemplate(row: { id: string; game: GameType; config: Record<string, unknown>; shareCode?: string }) { this.db.saveTemplate(row); }

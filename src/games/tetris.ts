@@ -2,6 +2,12 @@ import type { TetrisPiece, TetrisPlayerState, TetrisState } from '../shared/type
 import type { GameModule } from './contract.js';
 
 const W = 10, H = 20, ATTACK_COST_PER_LINE = 4, CLEAR_ANIMATION_MS = 200, LOCK_DELAY_MS = 300, TYPES = ['I', 'J', 'L', 'O', 'S', 'T', 'Z'];
+const heldIncoming = new WeakMap<TetrisState, Set<string>>();
+export const holdTetrisIncoming = (state: TetrisState, id: string, held: boolean) => {
+  let ids = heldIncoming.get(state);
+  if (!ids) { ids = new Set(); heldIncoming.set(state, ids); }
+  if (held) ids.add(id); else ids.delete(id);
+};
 const SHAPES: Record<string, number[][][]> = {
   I: [[[0,1],[1,1],[2,1],[3,1]], [[2,0],[2,1],[2,2],[2,3]], [[0,2],[1,2],[2,2],[3,2]], [[1,0],[1,1],[1,2],[1,3]]],
   O: [[[1,0],[2,0],[1,1],[2,1]]],
@@ -20,6 +26,11 @@ const pieceRandom = (player: TetrisPlayerState) => {
   value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
   return ((value ^ (value >>> 14)) >>> 0) / 0x100000000;
 };
+const garbageRandom = (player: TetrisPlayerState) => {
+  if (player.garbageRandomState === undefined) return Math.random();
+  player.garbageRandomState = (Math.imul(player.garbageRandomState, 1664525) + 1013904223) >>> 0;
+  return player.garbageRandomState / 0x100000000;
+};
 const shuffle = <T>(items: T[], random: () => number) => { const copy = [...items]; for (let i = copy.length - 1; i; i--) { const j = Math.floor(random() * (i + 1)); [copy[i], copy[j]] = [copy[j], copy[i]]; } return copy; };
 const cells = (piece: TetrisPiece) => SHAPES[piece.type][piece.rotation % SHAPES[piece.type].length].map(([x, y]) => [piece.x + x, piece.y + y] as const);
 const valid = (player: TetrisPlayerState, piece: TetrisPiece) => cells(piece).every(([x, y]) => x >= 0 && x < W && y < H && (y < 0 || !player.board[y][x]));
@@ -30,18 +41,30 @@ const queueAttack = (state: TetrisState, id: string, lines: number) => {
   const player = state.players[id]; let left = lines;
   for (const incoming of player.incoming) { const used = Math.min(left, incoming.lines); incoming.lines -= used; left -= used; if (!left) break; }
   player.incoming = player.incoming.filter(item => item.lines > 0);
-  if (left) { const opponent = Object.keys(state.players).find(other => other !== id)!; state.players[opponent].incoming.push({ lines: left, fromPlayerId: id }); }
+  if (left) { const opponent = Object.keys(state.players).find(other => other !== id); if (opponent) state.players[opponent].incoming.push({ lines: left, fromPlayerId: id }); }
 };
 const autoQueueAttack = (state: TetrisState, id: string) => {
   if (state.mode !== 'versus' || state.attackEnabled === false || state.attackMode !== 'auto') return;
   const player = state.players[id];
-  while (player.attackPoints >= 16 && player.attackQueue.length < 4) { player.attackPoints -= 16; player.attackQueue.push(4); }
+  while (player.attackQueue.length < 4) {
+    if (!player.autoFirstAttackQueued) {
+      if (player.attackPoints < 16) break;
+      player.attackPoints -= 16;
+      player.attackQueue.push(4);
+      player.autoFirstAttackQueued = true;
+    } else {
+      const lines = Math.min(4, Math.floor(player.attackPoints / ATTACK_COST_PER_LINE));
+      if (lines < 2) break;
+      player.attackPoints -= lines * ATTACK_COST_PER_LINE;
+      player.attackQueue.push(lines);
+    }
+  }
 };
 const releaseAttack = (state: TetrisState, id: string) => { if (state.mode !== 'versus' || state.attackEnabled === false) return; const player = state.players[id]; const lines = player.attackQueue.shift(); if (lines) queueAttack(state, id, lines); autoQueueAttack(state, id); };
 const addGarbage = (player: TetrisPlayerState, lines: number) => {
   for (let i = 0; i < lines; i++) {
     if (player.board[0].some(Boolean)) player.lost = true;
-    const gap = Math.floor(Math.random() * W);
+    const gap = Math.floor(garbageRandom(player) * W);
     player.board.shift();
     player.board.push(Array.from({ length: W }, (_, x) => x === gap ? null : 'G'));
   }
@@ -53,7 +76,7 @@ const collapseRows = (player: TetrisPlayerState, selected: number[]) => {
 };
 const settlePiece = (state: TetrisState, id: string) => {
   const player = state.players[id];
-  if (state.mode === 'versus' && player.incoming.length) {
+  if (state.mode === 'versus' && player.incoming.length && !heldIncoming.get(state)?.has(id)) {
     const lines = player.incoming.reduce((sum, item) => sum + item.lines, 0);
     player.incoming = [];
     addGarbage(player, lines);
@@ -114,6 +137,38 @@ const resolveLoss = (state: TetrisState) => {
   else state.winnerId = Object.keys(state.players).find(id => id !== lost[0]);
 };
 
+/** Advance every due game event in time order. Pass one id for local prediction. */
+export const advanceTetris = (state: TetrisState, now: number, onlyPlayerId?: string) => {
+  if (state.winnerId || state.draw || state.gameOver || state.pausedAt) return false;
+  const ids = onlyPlayerId ? [onlyPlayerId] : Object.keys(state.players);
+  let changed = false;
+  for (let steps = 0; steps < 2000; steps++) {
+    let due = state.nextFallAt;
+    for (const id of ids) {
+      const player = state.players[id];
+      if (!player || player.lost) continue;
+      if (player.clearing) due = Math.min(due, player.clearing.endsAt);
+      else if (player.lockAt !== undefined) due = Math.min(due, player.lockAt);
+    }
+    if (due > now) break;
+    for (const id of ids) {
+      const player = state.players[id];
+      if (player?.clearing && player.clearing.endsAt <= due) { finishLock(state, id, due); changed = true; }
+    }
+    for (const id of ids) {
+      const player = state.players[id];
+      if (player && !player.lost && !player.clearing && player.lockAt !== undefined && player.lockAt <= due) { lock(state, id, due); changed = true; }
+    }
+    if (state.nextFallAt <= due) {
+      if (!state.winnerId && !state.draw && !state.gameOver) for (const id of ids) if (state.players[id]) down(state, id, due);
+      state.nextFallAt = due + interval(state);
+      changed = true;
+    }
+    if (state.winnerId || state.draw || state.gameOver) break;
+  }
+  return changed;
+};
+
 export const tetrisGame: GameModule<TetrisState> = {
   type: 'tetris',
   createState(players, config) {
@@ -121,7 +176,7 @@ export const tetrisGame: GameModule<TetrisState> = {
     if (players.length !== (mode === 'solo' ? 1 : 2)) throw new Error(mode === 'solo' ? '單人俄羅斯方塊需要一位玩家' : '俄羅斯方塊需要剛好兩位玩家');
     const state: TetrisState = { mode, ...(mode === 'versus' ? { attackEnabled: config.attackEnabled !== false, attackMode: config.attackMode === 'auto' ? 'auto' as const : 'manual' as const } : {}), players: {}, nextFallAt: Date.now() + 1000 };
     const pieceRandomState = mode === 'versus' ? Math.floor(Math.random() * 0x100000000) : undefined;
-    for (const player of players) { const value: TetrisPlayerState = { board: board(), active: { type: 'T', rotation: 0, x: 3, y: -1 }, next: [], bag: [], ...(pieceRandomState === undefined ? {} : { pieceRandomState }), lines: 0, score: 0, attackPoints: 0, attackQueue: [], incoming: [] }; state.players[player.id] = value; spawn(value); }
+    for (const player of players) { const value: TetrisPlayerState = { board: board(), active: { type: 'T', rotation: 0, x: 3, y: -1 }, next: [], bag: [], ...(pieceRandomState === undefined ? {} : { pieceRandomState, garbageRandomState: Math.floor(Math.random() * 0x100000000) }), lines: 0, score: 0, attackPoints: 0, attackQueue: [], incoming: [] }; state.players[player.id] = value; spawn(value); }
     return state;
   },
   apply(state, { actorId, message, now = Date.now() }) {
@@ -146,11 +201,7 @@ export const tetrisGame: GameModule<TetrisState> = {
     return { eventType: message.type, payload: { playerId: actorId }, finished: Boolean(state.winnerId || state.draw || state.gameOver) };
   },
   tick(state, { now }) {
-    if (state.winnerId || state.draw || state.gameOver || state.pausedAt) return;
-    let changed = false;
-    for (const [id, player] of Object.entries(state.players)) if (player.clearing && now >= player.clearing.endsAt) { finishLock(state, id, now); changed = true; }
-    for (const [id, player] of Object.entries(state.players)) if (!player.lost && !player.clearing && player.lockAt !== undefined && now >= player.lockAt) { lock(state, id, now); changed = true; }
-    if (!state.winnerId && !state.draw && !state.gameOver && now >= state.nextFallAt) { for (const id of Object.keys(state.players)) down(state, id, now); state.nextFallAt = now + interval(state); changed = true; }
+    const changed = advanceTetris(state, now);
     return changed ? { eventType: 'tetris.tick', payload: {}, finished: Boolean(state.winnerId || state.draw || state.gameOver) } : undefined;
   },
   publicState(state) { return structuredClone(state); },

@@ -78,6 +78,20 @@ test('雙方集氣依玩家分開更新，滿格門檻符合攻擊模式', () =>
   }
 });
 
+test('自動首攻狀態同步後，集氣門檻改為八點', () => {
+  const state = tetrisGame.createState(players, { attackMode: 'auto' });
+  const w = viewer('host', state, { attackMode: 'auto' });
+  const before = visibleTetris(state);
+  state.players.host.autoFirstAttackQueued = true;
+  state.players.host.attackQueue.push(4);
+  const patch = diffTetris(before, visibleTetris(state), ['host']);
+  assert.equal(patch.players.host.autoFirstAttackQueued, true);
+  w.deliver({ type: 'tetris.patch', sequence: 1, patch });
+  assert.match(w.document.querySelector('.tetris-charge[data-player-id="host"]').getAttribute('aria-label'), /0 \/ 8/);
+  assert.match(w.document.querySelector('.tetris-charge[data-player-id="guest"]').getAttribute('aria-label'), /0 \/ 16/);
+  w.close();
+});
+
 test('雙方自己的更新只移動自己的大棋盤與預覽，對手更新只移動小棋盤', () => {
   for (const id of ['host', 'guest']) {
     const state = tetrisGame.createState(players, {}), w = viewer(id, state);
@@ -181,7 +195,7 @@ test('攻擊按鈕每排需要四點並顯示成本', () => {
   w.close();
 });
 
-test('對戰斷線暫停會延後消行完成與鎖定時間', () => {
+test('對戰斷線期間仍照遊戲時間完成消行與鎖定', () => {
   const rooms = new RoomService(createDatabase(':memory:'));
   const { room } = rooms.create('tetris', '甲', {});
   rooms.addPlayer(room, '乙');
@@ -193,13 +207,13 @@ test('對戰斷線暫停會延後消行完成與鎖定時間', () => {
   second.lockAt = 1500;
   room.players[1].connected = false;
   rooms.tick(room, 1000);
-  room.players[1].connected = true;
-  rooms.tick(room, 2000);
-  assert.equal(first.clearing.endsAt, 2150);
-  assert.equal(second.lockAt, 2500);
-  rooms.tick(room, 2149);
-  assert.ok(first.clearing);
-  assert.equal(second.board[19].some(Boolean), false);
+  assert.equal(first.clearing.endsAt, 1150);
+  assert.equal(second.lockAt, 1500);
+  rooms.tick(room, 1600);
+  assert.equal(first.clearing, undefined);
+  assert.equal(second.lost, true);
+  assert.equal(room.state.pausedAt, undefined);
+  assert.equal(room.status, 'finished');
 });
 
 test('自己即時收到差異，對手 250 毫秒內收到合併結果', async () => {
@@ -228,6 +242,8 @@ test('自己即時收到差異，對手 250 毫秒內收到合併結果', async 
     const guestToken = messages[1].find(message => message.type === 'joined').reconnectToken;
     assert.equal(initial.payload.status, 'playing');
     assert.equal('bag' in initial.payload.state.players[room.hostId], false);
+    assert.ok(Array.isArray(initial.payload.prediction.player.bag));
+    assert.equal(initial.payload.prediction.acknowledged, 0);
     messages[0].length = 0; messages[1].length = 0;
     for (let index = 0; index < 3; index++) sockets[0].send(JSON.stringify({ type: 'tetris.move', direction: 'right' }));
     await delay(90);
@@ -241,7 +257,8 @@ test('自己即時收到差異，對手 250 毫秒內收到合併結果', async 
     sockets[1].close();
     await within(once(sockets[1], 'close'), 'guest disconnect');
     await delay(70);
-    assert.ok(room.state.pausedAt);
+    assert.equal(room.state.pausedAt, undefined);
+    assert.ok(room.disconnectedAt.has(room.players[1].id));
     messages[1].length = 0;
     const replacement = new WebSocket(url); sockets.push(replacement);
     replacement.on('message', raw => messages[1].push(JSON.parse(raw.toString())));
@@ -251,6 +268,7 @@ test('自己即時收到差異，對手 250 毫秒內收到合併結果', async 
     const restored = messages[1].find(message => message.type === 'snapshot' && message.payload.status === 'playing');
     assert.equal(restored.payload.state.players[room.hostId].active.x, initial.payload.state.players[room.hostId].active.x + 3);
     assert.equal(room.state.pausedAt, undefined);
+    assert.equal(room.disconnectedAt.has(room.players[1].id), false);
     const spectatorMessages = []; messages[2] = spectatorMessages;
     const spectator = new WebSocket(url); sockets.push(spectator);
     spectator.on('message', raw => spectatorMessages.push(JSON.parse(raw.toString())));
@@ -265,6 +283,35 @@ test('自己即時收到差異，對手 250 毫秒內收到合併結果', async 
     assert.equal(spectatorMessages.filter(message => message.type === 'tetris.patch').length, 0);
     await delay(220);
     assert.equal(spectatorMessages.filter(message => message.type === 'tetris.patch').length, 1);
+    const beforeNumbered = room.state.players[room.hostId].active.x;
+    const numbered = JSON.stringify({ type: 'tetris.move', direction: 'right', clientSequence: 1, clientTime: Date.now() });
+    sockets[0].send(numbered);
+    sockets[0].send(numbered);
+    await delay(70);
+    assert.equal(room.state.players[room.hostId].active.x, beforeNumbered + 1);
+    assert.equal(messages[0].filter(message => message.type === 'tetris.ack').length, 2);
+    assert.equal(messages[0].findLast(message => message.type === 'tetris.ack').authority.acknowledged, 1);
+    sockets[0].send(JSON.stringify({ type: 'tetris.attack', lines: 99, clientSequence: 2 }));
+    await delay(25);
+    assert.equal(messages[0].findLast(message => message.type === 'tetris.ack').rejected, true);
+    sockets[0].send(JSON.stringify({ type: 'tetris.move', direction: 'left', clientSequence: 3 }));
+    await delay(40);
+    assert.equal(room.state.players[room.hostId].active.x, beforeNumbered);
+    assert.equal(messages[0].findLast(message => message.type === 'tetris.ack').authority.acknowledged, 3);
+    sockets[0].close();
+    await within(once(sockets[0], 'close'), 'host disconnect');
+    room.state.players[room.hostId].incoming.push({ lines: 1, fromPlayerId: room.players[1].id });
+    const hostReplacement = new WebSocket(url); sockets.push(hostReplacement);
+    hostReplacement.on('message', raw => messages[0].push(JSON.parse(raw.toString())));
+    await within(once(hostReplacement, 'open'), 'host reconnect');
+    hostReplacement.send(JSON.stringify({ type: 'join', name: '甲', reconnectToken, tetrisPendingThrough: 4 }));
+    await delay(35);
+    hostReplacement.send(JSON.stringify({ type: 'tetris.hardDrop', clientSequence: 4 }));
+    await delay(35);
+    assert.equal(room.state.players[room.hostId].incoming.length, 1);
+    hostReplacement.send(JSON.stringify({ type: 'tetris.hardDrop', clientSequence: 5 }));
+    await delay(35);
+    assert.equal(room.state.players[room.hostId].incoming.length, 0);
   } finally {
     realtime.close();
     for (const socket of sockets) socket.terminate();

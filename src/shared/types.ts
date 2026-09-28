@@ -12,7 +12,7 @@ export interface RoomSnapshot {
 }
 
 export type ClientMessage =
-  | { type: 'join'; name: string; password?: string; reconnectToken?: string; observer?: boolean; identityId?: string; deviceInfo?: DeviceInfo }
+  | { type: 'join'; name: string; password?: string; reconnectToken?: string; observer?: boolean; identityId?: string; deviceInfo?: DeviceInfo; tetrisPendingThrough?: number }
   | { type: 'player.rename'; name: string }
   | { type: 'host.start'; config?: Record<string, unknown> }
   | { type: 'race.clickBatch'; count: number; clientSequence: number }
@@ -24,14 +24,16 @@ export type ClientMessage =
   | { type: 'poll.reveal' }
   | { type: 'poll.clearHistory' }
   | { type: 'poll.nextRound'; question: string; options?: PollOption[] }
-  | { type: 'tetris.move'; direction: 'left' | 'right' | 'down' }
-  | { type: 'tetris.swap' }
-  | { type: 'tetris.rotate' }
-  | { type: 'tetris.hardDrop' }
-  | { type: 'tetris.surrender' }
-  | { type: 'tetris.attack'; lines: number }
-  | { type: 'tetris.selfClear'; lines: number }
+  | ({ type: 'tetris.move'; direction: 'left' | 'right' | 'down' } & TetrisInputMetadata)
+  | ({ type: 'tetris.swap' } & TetrisInputMetadata)
+  | ({ type: 'tetris.rotate' } & TetrisInputMetadata)
+  | ({ type: 'tetris.hardDrop' } & TetrisInputMetadata)
+  | ({ type: 'tetris.surrender' } & TetrisInputMetadata)
+  | ({ type: 'tetris.attack'; lines: number } & TetrisInputMetadata)
+  | ({ type: 'tetris.selfClear'; lines: number } & TetrisInputMetadata)
   | { type: 'chat.send'; text: string };
+
+export interface TetrisInputMetadata { clientSequence?: number; clientTime?: number; }
 
 export interface RaceState {
   startsAt: number;
@@ -85,10 +87,12 @@ export interface TetrisPlayerState {
   next: string[];
   bag: string[];
   pieceRandomState?: number;
+  garbageRandomState?: number;
   lines: number;
   score: number;
   attackPoints: number;
   attackQueue: number[];
+  autoFirstAttackQueued?: boolean;
   selfClearRows?: number;
   incoming: TetrisPendingGarbage[];
   swapUsed?: boolean;

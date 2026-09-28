@@ -1,7 +1,7 @@
 import type { TetrisCell, TetrisPlayerState, TetrisState } from './shared/types.js';
 
 export type VisiblePlayer = Pick<TetrisPlayerState, 'board' | 'active' | 'next' | 'lines' | 'score' | 'attackPoints' | 'attackQueue' | 'incoming'> & {
-  swapUsed?: boolean; lost?: boolean; clearing?: TetrisPlayerState['clearing']; selfClearRows?: number;
+  swapUsed?: boolean; lost?: boolean; clearing?: TetrisPlayerState['clearing']; selfClearRows?: number; autoFirstAttackQueued?: boolean;
 };
 export type VisibleTetris = Pick<TetrisState, 'mode'> & {
   players: Record<string, VisiblePlayer>;
@@ -10,7 +10,7 @@ export type VisibleTetris = Pick<TetrisState, 'mode'> & {
 export type PlayerPatch = Partial<Omit<VisiblePlayer, 'board'>> & { boardRows?: [number, TetrisCell[]][] };
 export type TetrisPatch = { players: Record<string, PlayerPatch>; state?: Record<string, unknown> };
 
-const playerFields = ['active', 'next', 'lines', 'score', 'attackPoints', 'attackQueue', 'incoming', 'swapUsed', 'lost', 'clearing', 'selfClearRows'] as const;
+const playerFields = ['active', 'next', 'lines', 'score', 'attackPoints', 'attackQueue', 'incoming', 'swapUsed', 'lost', 'clearing', 'selfClearRows', 'autoFirstAttackQueued'] as const;
 const stateFields = ['pausedAt', 'pausedPlayerId', 'winnerId', 'draw', 'gameOver'] as const;
 
 export function visibleTetris(state: TetrisState): VisibleTetris {
@@ -20,6 +20,7 @@ export function visibleTetris(state: TetrisState): VisibleTetris {
       board: player.board.map(row => [...row]), active: { ...player.active }, next: [...player.next],
       lines: player.lines, score: player.score, attackPoints: player.attackPoints,
       attackQueue: [...player.attackQueue], incoming: player.incoming.map(item => ({ ...item })),
+      ...(player.autoFirstAttackQueued === undefined ? {} : { autoFirstAttackQueued: player.autoFirstAttackQueued }),
       ...(player.swapUsed === undefined ? {} : { swapUsed: player.swapUsed }),
       ...(player.lost === undefined ? {} : { lost: player.lost }),
       ...(player.clearing === undefined ? {} : { clearing: { rows: [...player.clearing.rows], endsAt: player.clearing.endsAt, ...(player.clearing.kind ? { kind: player.clearing.kind } : {}) } }),
