@@ -193,6 +193,42 @@ test('投票觀察者不會列入投票者，也不能投票', () => {
   assert.throws(() => rooms.apply(room, observer.id, { type: 'poll.vote', optionId: 'no' }), /觀眾/);
 });
 
+for (const hostObserver of [false, true]) {
+  test(`Scrum 局主可強制開牌（觀察者：${hostObserver}）`, () => {
+    const rooms = new RoomService(createDatabase(':memory:'));
+    const { room } = rooms.create('poll', '局主', { mode: 'scrum', options: [{ id: 'small', label: '小', point: 3 }, { id: 'large', label: '大', point: 8 }] }, undefined, hostObserver);
+    const voter = rooms.addPlayer(room, '投票者');
+    const observer = rooms.addPlayer(room, '觀察者', undefined, true);
+    rooms.start(room);
+    assert.throws(() => rooms.apply(room, voter.id, { type: 'poll.reveal' }), /只有局主/);
+    assert.throws(() => rooms.apply(room, observer.id, { type: 'poll.reveal' }), /觀眾/);
+    if (hostObserver) assert.throws(() => rooms.apply(room, room.hostId, { type: 'poll.vote', optionId: 'small' }), /觀眾/);
+    rooms.apply(room, room.hostId, { type: 'poll.reveal' });
+    assert.equal(room.state.revealed, true);
+    assert.equal(room.state.history.length, 1);
+    assert.equal(room.state.history[0].players.length, hostObserver ? 1 : 2);
+  });
+
+  test(`Scrum 所有非觀察者投完才自動開牌（局主觀察者：${hostObserver}）`, () => {
+    const rooms = new RoomService(createDatabase(':memory:'));
+    const { room } = rooms.create('poll', '局主', { mode: 'scrum', options: [{ id: 'small', label: '小', point: 3 }, { id: 'large', label: '大', point: 8 }] }, undefined, hostObserver);
+    const first = rooms.addPlayer(room, '第一位');
+    const last = rooms.addPlayer(room, '最後一位');
+    rooms.addPlayer(room, '觀察者', undefined, true);
+    rooms.start(room);
+    room.players.find(player => player.id === last.id).connected = false;
+    if (!hostObserver) rooms.apply(room, room.hostId, { type: 'poll.vote', optionId: 'small' });
+    rooms.apply(room, first.id, { type: 'poll.vote', optionId: 'small' });
+    rooms.apply(room, first.id, { type: 'poll.vote', optionId: 'large' });
+    assert.equal(room.state.revealed, false);
+    room.players.find(player => player.id === last.id).connected = true;
+    rooms.apply(room, last.id, { type: 'poll.vote', optionId: 'large' });
+    assert.equal(room.state.revealed, true);
+    assert.equal(room.state.history.length, 1);
+    assert.equal(room.state.history[0].players.length, room.players.length);
+  });
+}
+
 test('俄羅斯方塊結束後局主可用原房間重開，其他人不可重開', () => {
   const rooms = new RoomService(createDatabase(':memory:'));
   const { room, reconnectToken } = rooms.create('tetris', '局主', {});

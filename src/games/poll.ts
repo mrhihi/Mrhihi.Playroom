@@ -76,7 +76,9 @@ export const pollGame: GameModule<PollState> = {
     state.voteSequence = (state.voteSequence ?? 0) + 1;
     state.lastVote = { playerId: actorId, sequence: state.voteSequence, ...(revealedAction ? { revealedAction, revealedActionAt: Date.now() } : {}) };
     if (state.revealed) syncRevealedRound(state, players);
-    else if (Object.keys(state.votes).length >= players.filter(player => player.connected).length) reveal(state, players);
+    else if (state.mode === 'scrum'
+      ? players.length > 0 && players.every(player => state.votes[player.id] !== undefined)
+      : Object.keys(state.votes).length >= players.filter(player => player.connected).length) reveal(state, players);
     return { eventType: 'poll.vote', payload: { playerId: actorId, optionId: message.optionId } };
   },
   publicState(state) {

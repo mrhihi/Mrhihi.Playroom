@@ -225,7 +225,9 @@ export class RoomService {
   }
 
   apply(room: Room, playerId: string, message: ClientMessage, now = Date.now()) {
-    if (room.memberRoles.get(playerId) === 'spectator') throw new Error('觀眾不能操作遊戲');
+    const pollHostAction = room.game === 'poll' && playerId === room.hostId
+      && ['poll.reveal', 'poll.nextRound', 'poll.clearHistory'].includes(message.type);
+    if (room.memberRoles.get(playerId) === 'spectator' && !pollHostAction) throw new Error('觀眾不能操作遊戲');
     const result = getGame(room.game).apply(room.state, {
       actorId: playerId,
       hostId: room.hostId,
