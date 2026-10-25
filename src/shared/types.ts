@@ -54,7 +54,7 @@ export interface RaceRunner { id: string; name: string; virtual?: boolean; }
 export interface RaceTimelinePoint { offsetMs: number; distances: Record<string, number>; }
 export interface RaceCompletion { offsetMs: number; order: number; }
 export interface OldMaidCard { id: string; rank: string; suit: string; joker?: boolean; }
-export interface OldMaidState { turnPlayerId?: string; hands: Record<string, OldMaidCard[]>; eliminated: string[]; discardedCounts: Record<string, number>; loserId?: string; lastDraw?: { actorId: string; targetPlayerId: string; cardIndex: number; card: OldMaidCard; at: number }; tease?: { playerId: string; cardIndex: number; at: number }; focus?: { actorId: string; targetPlayerId: string; cardIndex: number; at: number }; shuffledPlayerIds?: string[]; shuffle?: { playerId: string; at: number; endsAt: number }; }
+export interface OldMaidState { winnerIds?: string[]; turnPlayerId?: string; hands: Record<string, OldMaidCard[]>; eliminated: string[]; discardedCounts: Record<string, number>; loserId?: string; lastDraw?: { actorId: string; targetPlayerId: string; cardIndex: number; card: OldMaidCard; at: number }; tease?: { playerId: string; cardIndex: number; at: number }; focus?: { actorId: string; targetPlayerId: string; cardIndex: number; at: number }; shuffledPlayerIds?: string[]; shuffle?: { playerId: string; at: number; endsAt: number }; }
 export type PollMode = 'standard' | 'scrum';
 export interface PollOption { id: string; label: string; point?: number | null; }
 export interface PollRoundHistory {

@@ -614,10 +614,10 @@ test('抽鬼牌只會留下無法配對的牌，並保留鬼牌', () => {
   assert.deepEqual(removePairs(cards).map(card => card.id), ['joker']);
 });
 
-test('抽鬼牌依 1 到 n 建立牌組，每個點數固定使用四種花色與一張鬼牌', () => {
+test('抽鬼牌固定使用 53 張牌並忽略舊點數設定', () => {
   const state = oldMaidGame.createState(players, { maxRank: 3 });
   const cards = Object.values(state.hands).flat();
-  assert.ok(cards.every(card => card.joker || ['1', '2', '3'].includes(card.rank)));
+  assert.equal(cards.length + Object.values(state.discardedCounts).reduce((a,b)=>a+b,0), 53);
   assert.ok(cards.some(card => card.joker));
 });
 

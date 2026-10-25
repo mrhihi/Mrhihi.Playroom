@@ -123,6 +123,7 @@ export class RoomService {
     room.stateVersion++;
     this.db.saveEvent(room.id, room.stateVersion, 'game.started', room.config);
 
+    if (room.game === 'old-maid' && (room.state as { loserId?: string }).loserId) { this.finish(room); return; }
     const delay = game.finishDelayMs?.(room.state);
     if (delay) room.gameTimer = setTimeout(() => this.finish(room), delay);
   }
@@ -151,7 +152,7 @@ export class RoomService {
       if (state.mode === 'solo') { const player = room.players[0], value = state.players?.[player?.id]; return { playerId: player?.id, playerName: player?.name, score: value?.score ?? 0, lines: value?.lines ?? 0, level: Math.floor((value?.lines ?? 0) / 10) + 1 }; }
       return { winnerId: state.winnerId, winnerName: room.players.find(player => player.id === state.winnerId)?.name, draw: Boolean(state.draw), rankings: room.players.map(player => ({ playerId: player.id, name: player.name, score: state.players?.[player.id]?.score ?? 0, lines: state.players?.[player.id]?.lines ?? 0 })) };
     }
-    return { loserId: state.loserId, loserName: room.players.find(player => player.id === state.loserId)?.name };
+    return { winnerIds: state.winnerIds ?? [], winnerNames: (state.winnerIds ?? []).map((id: string) => room.players.find(player => player.id === id)?.name ?? id), loserId: state.loserId, loserName: room.players.find(player => player.id === state.loserId)?.name };
   }
 
   addPlayer(room: Room, name: string, token?: string, observer = false, identity: unknown = {}) {

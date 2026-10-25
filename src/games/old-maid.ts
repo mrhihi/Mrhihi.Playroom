@@ -19,17 +19,38 @@ function activePlayerIds(state: OldMaidState, players: { id: string }[]) {
   return players.map(player => player.id).filter(id => (state.hands[id]?.length ?? 0) > 0);
 }
 
+export function nextOldMaidPlayerId(state: OldMaidState, players: { id: string }[], actorId: string) {
+  const index = players.findIndex(player => player.id === actorId);
+  if (index < 0) return undefined;
+  for (let offset = 1; offset < players.length; offset++) {
+    const id = players[(index + offset) % players.length].id;
+    if (state.hands[id]?.length) return id;
+  }
+  return undefined;
+}
+
+function updateExits(state: OldMaidState, players: { id: string }[]) {
+  const newlySafe = players.map(player => player.id).filter(id => !state.hands[id]?.length && !state.eliminated.includes(id));
+  if (!state.winnerIds?.length && !state.eliminated.length && newlySafe.length) state.winnerIds = [...newlySafe];
+  state.eliminated.push(...newlySafe);
+  const active = activePlayerIds(state, players);
+  if (active.length === 1 && state.hands[active[0]].length === 1 && state.hands[active[0]][0].joker) {
+    state.loserId = active[0];
+    state.turnPlayerId = undefined;
+  }
+}
+
 function ensureShuffleState(state: OldMaidState) {
   if (!state.shuffledPlayerIds) state.shuffledPlayerIds = [];
   if (!state.discardedCounts) state.discardedCounts = {};
 }
 
-function createDeck(maxRank: number): OldMaidCard[] {
-  const ranks = Array.from({ length: Math.min(13, Math.max(1, Math.floor(maxRank))) }, (_, index) => String(index + 1));
+export function createDeck(): OldMaidCard[] {
+  const ranks = Array.from({ length: 13 }, (_, index) => String(index + 1));
   const suits = ['♠', '♥', '♦', '♣'];
   const cards: OldMaidCard[] = ranks.flatMap(rank => suits.map(suit => ({ id: randomUUID(), rank, suit })));
   cards.push({ id: randomUUID(), rank: 'JOKER', suit: '🃏', joker: true });
-  return cards.sort(() => Math.random() - 0.5);
+  return shuffleHand(cards);
 }
 
 export function removePairs(hand: OldMaidCard[]) {
@@ -38,27 +59,31 @@ export function removePairs(hand: OldMaidCard[]) {
     const key = card.joker ? card.id : card.rank;
     groups.set(key, [...(groups.get(key) ?? []), card]);
   }
-  return [...groups.values()].filter(group => group.length % 2).map(group => group[group.length - 1]).sort(() => Math.random() - 0.5);
+  const survivors = new Set([...groups.values()].filter(group => group.length % 2).map(group => group[group.length - 1]));
+  return hand.filter(card => survivors.has(card));
 }
 
 export const oldMaidGame: GameModule<OldMaidState> = {
   type: 'old-maid',
-  createState(players, config) {
+  createState(players) {
     const hands: Record<string, OldMaidCard[]> = Object.fromEntries(players.map(player => [player.id, []]));
     const discardedCounts: Record<string, number> = Object.fromEntries(players.map(player => [player.id, 0]));
     if (players.length < 2) throw new Error('抽鬼牌至少需要兩位玩家');
-    for (const [index, card] of createDeck(Number(config.maxRank ?? 13)).entries()) hands[players[index % players.length].id].push(card);
+    for (const [index, card] of createDeck().entries()) hands[players[index % players.length].id].push(card);
     for (const id of Object.keys(hands)) { const originalCount = hands[id].length; hands[id] = removePairs(hands[id]); discardedCounts[id] = originalCount - hands[id].length; }
-    return { hands, eliminated: [], discardedCounts, turnPlayerId: players[0]?.id, shuffledPlayerIds: [] };
+    const state: OldMaidState = { hands, eliminated: [], winnerIds: [], discardedCounts, shuffledPlayerIds: [] };
+    updateExits(state, players);
+    if (!state.loserId) state.turnPlayerId = activePlayerIds(state, players)[0];
+    return state;
   },
   apply(state, { actorId, players, message }) {
-    ensureShuffleState(state);
+    if (state.loserId) throw new Error('遊戲已結束');
     const now = Date.now();
     if (state.shuffle?.endsAt && state.shuffle.endsAt > now) throw new Error('正在洗牌，請稍候');
     if (message.type === 'oldMaid.shuffle') {
-      if (state.loserId) throw new Error('遊戲已結束，不能洗牌');
       if (!state.hands[actorId]?.length) throw new Error('沒有手牌可洗');
       if (state.shuffledPlayerIds?.includes(actorId)) throw new Error('上次抽牌後已洗過牌，請等待下一次抽牌');
+      ensureShuffleState(state);
       state.hands[actorId] = shuffleHand(state.hands[actorId]);
       state.shuffledPlayerIds = [...(state.shuffledPlayerIds ?? []), actorId];
       if (state.focus?.targetPlayerId === actorId) state.focus = undefined;
@@ -73,6 +98,7 @@ export const oldMaidGame: GameModule<OldMaidState> = {
         return { eventType: 'oldMaid.focus', payload: { playerId: actorId, cleared: true } };
       }
       if (actorId === message.targetPlayerId) throw new Error('不能選自己的牌');
+      if (!state.hands[actorId]?.length || message.targetPlayerId !== nextOldMaidPlayerId(state, players, actorId)) throw new Error('只能從下一位仍有手牌的玩家抽牌');
       const target = state.hands[message.targetPlayerId] ?? [];
       if (!target[message.cardIndex]) throw new Error('牌不存在');
       state.focus = { actorId, targetPlayerId: message.targetPlayerId, cardIndex: message.cardIndex, at: now };
@@ -86,9 +112,11 @@ export const oldMaidGame: GameModule<OldMaidState> = {
     }
     if (message.type !== 'oldMaid.draw') throw new Error('無效的抽鬼牌操作');
     if (state.turnPlayerId !== actorId || actorId === message.targetPlayerId) throw new Error('現在不能抽這張牌');
+    if (!state.hands[actorId]?.length || message.targetPlayerId !== nextOldMaidPlayerId(state, players, actorId)) throw new Error('只能從下一位仍有手牌的玩家抽牌');
     const target = state.hands[message.targetPlayerId] ?? [];
     const card = target[message.cardIndex];
     if (!card) throw new Error('牌不存在');
+    ensureShuffleState(state);
     target.splice(message.cardIndex, 1);
     state.tease = undefined;
     state.focus = undefined;
@@ -98,13 +126,8 @@ export const oldMaidGame: GameModule<OldMaidState> = {
     state.hands[actorId] = removePairs(state.hands[actorId]);
     state.discardedCounts[actorId] = (state.discardedCounts[actorId] ?? 0) + handCountBeforePairs - state.hands[actorId].length;
     state.shuffledPlayerIds = [];
-    if (!state.hands[actorId].length && !state.eliminated.includes(actorId)) state.eliminated.push(actorId);
-    const active = activePlayerIds(state, players);
-    if (active.length <= 1) { state.loserId = active[0]; state.turnPlayerId = undefined; }
-    else {
-      const actorIndex = players.findIndex(player => player.id === actorId);
-      state.turnPlayerId = Array.from({ length: players.length - 1 }, (_, offset) => players[(actorIndex + offset + 1) % players.length].id).find(id => active.includes(id));
-    }
+    updateExits(state, players);
+    if (!state.loserId) state.turnPlayerId = nextOldMaidPlayerId(state, players, actorId);
     return { eventType: 'oldMaid.draw', payload: { playerId: actorId, targetPlayerId: message.targetPlayerId, cardIndex: message.cardIndex }, finished: Boolean(state.loserId) };
   },
   publicState(state) {
